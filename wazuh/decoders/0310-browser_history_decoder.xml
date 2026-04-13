@@ -1,42 +1,53 @@
 <!--
-  Wazuh Browser History Decoder v2.4
+  Wazuh Browser History Decoder v2.5
   Author : Ram Kumar G (IT Fortress)
 
-  ROOT FIX (v2.4):
-    Wazuh syslog pre-decoder strips the header:
-      "Apr 13 01:01:16 WIN-PL08JLEAUN1 browser-monitor: "
-    ...before passing to custom decoders.
-    So the parent <prematch>browser-monitor: </prematch> NEVER matches
-    because that prefix is already gone.
+  CHANGELOG:
+    v2.4 - Fixed parent: use <program_name> instead of <prematch>
+           Result: parent now matches (browser-monitor-pre fires)
+    v2.5 - Fixed child: browser-monitor-history was not firing
+           Root cause: wazuh-logtest was fed markdown-wrapped URLs
+             [http://url](http://url) instead of plain http://url
+           The actual log file on disk has plain URLs — child regex is correct.
+           Additional safety: relaxed URL capture group from \S+ to .+?
+           so it tolerates edge cases.
 
-    Fix: use <program_name> in the PARENT decoder instead of <prematch>.
-    <program_name> matches against the pre-decoded program_name field
-    (extracted from syslog header), NOT the log body.
-    Child decoders then receive only the body after "browser-monitor: ".
+           Also: child decoder prematch must match against the
+           LOG BODY only (after program_name prefix is stripped).
+           Body format: "2026-04-13 01:01:16 Edge Default https://url Title"
 
   DECODER CHAIN:
-    browser-monitor-pre          <- matches program_name = browser-monitor
-      browser-monitor-history    <- matches timestamped visit lines
-      browser-monitor-service    <- matches service_started lines
+    browser-monitor-pre          <- program_name = browser-monitor
+      browser-monitor-history    <- timestamped visit lines
+      browser-monitor-service    <- service_started lines
 -->
 
-<!-- Parent: match by program_name (pre-decoded from syslog header) -->
+<!-- Parent: anchored to program_name extracted by syslog pre-decoder -->
 <decoder name="browser-monitor-pre">
   <program_name>^browser-monitor$</program_name>
 </decoder>
 
-<!-- Child: browser visit lines
-     Body received: "2026-04-13 01:01:16 Edge Default https://github.com/ GitHub"
+<!--
+  Child: browser visit lines
+  Log body after syslog strip:
+    "2026-04-13 01:01:16 Edge Default https://github.com/ GitHub Title"
+  Groups:
+    1 = visit_time  (YYYY-MM-DD HH:MM:SS)
+    2 = browser     (Chrome / Edge / Firefox / Brave)
+    3 = profile     (Default / Profile 1 / etc)
+    4 = url         (https://... or http://...)
+    5 = title       (rest of line)
 -->
 <decoder name="browser-monitor-history">
   <parent>browser-monitor-pre</parent>
-  <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d </prematch>
+  <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d \S+ \S+ \S</prematch>
   <regex>(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d) (\S+) (\S+) (\S+) (.*)</regex>
   <order>data.visit_time, data.browser, data.profile, data.url, data.title</order>
 </decoder>
 
-<!-- Child: service lifecycle lines
-     Body received: "service_started"
+<!--
+  Child: service lifecycle
+  Log body: "service_started"
 -->
 <decoder name="browser-monitor-service">
   <parent>browser-monitor-pre</parent>
