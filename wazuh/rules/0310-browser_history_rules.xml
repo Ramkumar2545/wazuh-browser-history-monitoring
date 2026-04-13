@@ -1,11 +1,17 @@
 <!--
   Wazuh Browser History Rules
   Author  : Ram Kumar G (IT Fortress)
-  Version : 2.3
+  Version : 2.4
   Rule IDs: 900100 - 900113
 
-  NOTE: Rule IDs 900100+ are in the custom/local range safe for user rules.
-  The 110100 range was conflicting with existing rules.
+  CRITICAL FIX (v2.4):
+    Rule <regex> in Wazuh matches against the RAW full log string,
+    NOT against decoded field names like data.url.
+    All previous rules had "data\.url.*" prefix which NEVER matched.
+    Fixed: regex now matches directly against the raw log body.
+
+  Raw log format rules match against:
+    "Apr 13 01:01:16 WIN-PC browser-monitor: 2026-04-13 01:01:16 Edge Default https://url Title"
 
   MITRE ATT&CK Mapped:
     T1204.002 - User Execution: Malicious File
@@ -19,7 +25,7 @@
 
 <group name="browser_history,">
 
-  <!-- 900100: Baseline - every browser visit (low level, visibility) -->
+  <!-- 900100: Baseline - every browser visit -->
   <rule id="900100" level="2">
     <decoded_as>browser-monitor-history</decoded_as>
     <description>Browser History: $(data.browser) visit by $(agent.name) - $(data.url)</description>
@@ -29,7 +35,7 @@
   <!-- 900101: Dangerous file download -->
   <rule id="900101" level="10">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*\.(exe|msi|ps1|bat|cmd|hta|vbs|js|jar|iso|img|dll|scr|pif|com)(\?|$|#|\s)</regex>
+    <regex type="pcre2">https?://\S+\.(exe|msi|ps1|bat|cmd|hta|vbs|jar|iso|img|dll|scr|pif)(\?|\s|$)</regex>
     <description>Browser Download Risk: Potentially dangerous file extension via $(data.browser)</description>
     <mitre>
       <id>T1204.002</id>
@@ -40,7 +46,7 @@
   <!-- 900102: Credential/phishing page -->
   <rule id="900102" level="10">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(login|signin|sign-in|verify|mfa|otp|2fa|auth|reset-password|account-recovery|credential|password-reset)(.*)</regex>
+    <regex type="pcre2">https?://\S*(login|signin|sign-in|verify|mfa|otp|2fa|reset-password|account-recovery|password-reset)\S*</regex>
     <description>Browser Credential Page: Possible phishing or auth page via $(data.browser)</description>
     <mitre>
       <id>T1566.002</id>
@@ -51,7 +57,7 @@
   <!-- 900103: Anonymizer / TOR -->
   <rule id="900103" level="8">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(torproject\.org|tor2web|torsocks|proxysite|hidemyass|anonymouse|proxfree|kproxy|hide\.me|whoer\.net|vpnbook)(.*)</regex>
+    <regex type="pcre2">(torproject\.org|tor2web|torsocks|proxysite|hidemyass|anonymouse|proxfree|kproxy|hide\.me|whoer\.net|vpnbook)</regex>
     <description>Browser Anonymizer: TOR/proxy access detected via $(data.browser)</description>
     <mitre>
       <id>T1090</id>
@@ -62,7 +68,7 @@
   <!-- 900104: Data-sharing / paste site -->
   <rule id="900104" level="7">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(pastebin\.com|paste\.ee|ghostbin|hastebin|termbin|dpaste|rentry\.co|privatebin|mega\.nz|gofile\.io|anonfiles|bayfiles|wetransfer\.com|send\.firefox\.com)(.*)</regex>
+    <regex type="pcre2">(pastebin\.com|paste\.ee|ghostbin|hastebin|termbin|dpaste|rentry\.co|privatebin|mega\.nz|gofile\.io|anonfiles|bayfiles|wetransfer\.com|send\.firefox\.com)</regex>
     <description>Browser Data-Sharing Site: Paste/upload site visited via $(data.browser)</description>
     <mitre>
       <id>T1567</id>
@@ -73,7 +79,7 @@
   <!-- 900105: Cloud storage -->
   <rule id="900105" level="6">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(drive\.google\.com|docs\.google\.com|onedrive\.live\.com|dropbox\.com|box\.com|sync\.com|pcloud\.com|icloud\.com)(.*)</regex>
+    <regex type="pcre2">(drive\.google\.com|docs\.google\.com|onedrive\.live\.com|dropbox\.com|box\.com|sync\.com|pcloud\.com|icloud\.com)</regex>
     <description>Browser Cloud Storage: File sharing site visited via $(data.browser)</description>
     <mitre>
       <id>T1567.002</id>
@@ -84,15 +90,15 @@
   <!-- 900106: Non-HTTP scheme -->
   <rule id="900106" level="4">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(ftp://|file://|data:|blob:|javascript:)(.*)</regex>
+    <regex type="pcre2">(ftp://|file://|data:|blob:|javascript:)</regex>
     <description>Browser Non-HTTP Scheme: Unusual URL scheme via $(data.browser)</description>
     <group>browser_history,unusual_scheme,</group>
   </rule>
 
-  <!-- 900107: Insecure HTTP -->
+  <!-- 900107: Insecure HTTP (excludes localhost and private IPs) -->
   <rule id="900107" level="3">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*http://(?!localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)(.*)</regex>
+    <regex type="pcre2">http://(?!localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)</regex>
     <description>Browser Insecure HTTP: Non-HTTPS site visited via $(data.browser)</description>
     <group>browser_history,insecure_http,</group>
   </rule>
@@ -100,7 +106,7 @@
   <!-- 900108: Crypto / trading -->
   <rule id="900108" level="5">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(binance\.com|coinbase\.com|kraken\.com|kucoin\.com|bybit\.com|crypto\.com|blockchain\.com|metamask\.io|uniswap\.org|opensea\.io)(.*)</regex>
+    <regex type="pcre2">(binance\.com|coinbase\.com|kraken\.com|kucoin\.com|bybit\.com|crypto\.com|blockchain\.com|metamask\.io|uniswap\.org|opensea\.io)</regex>
     <description>Browser Crypto Site: Cryptocurrency platform visited via $(data.browser)</description>
     <group>browser_history,crypto,</group>
   </rule>
@@ -108,7 +114,7 @@
   <!-- 900109: Social media -->
   <rule id="900109" level="3">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com|snapchat\.com|reddit\.com|linkedin\.com|discord\.com|telegram\.org)(.*)</regex>
+    <regex type="pcre2">(facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com|snapchat\.com|reddit\.com|linkedin\.com|discord\.com|telegram\.org)</regex>
     <description>Browser Social Media: Social platform visited via $(data.browser)</description>
     <group>browser_history,social_media,</group>
   </rule>
@@ -116,7 +122,7 @@
   <!-- 900110: Exploit/hacking tools -->
   <rule id="900110" level="9">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(exploit-db\.com|shodan\.io|zoomeye\.org|fofa\.info|censys\.io|hunter\.io|haveibeenpwned|darkweb|hacking-tools|crackstation|nulled\.to)(.*)</regex>
+    <regex type="pcre2">(exploit-db\.com|shodan\.io|zoomeye\.org|fofa\.info|censys\.io|hunter\.io|haveibeenpwned|hacking-tools|crackstation|nulled\.to)</regex>
     <description>Browser Exploit Site: Security research/exploit site via $(data.browser)</description>
     <mitre>
       <id>T1588.005</id>
@@ -127,7 +133,7 @@
   <!-- 900111: Dark web proxy -->
   <rule id="900111" level="9">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(\.onion|darkweb|dark-web|onion\.to|onion\.ws|onion\.ly)(.*)</regex>
+    <regex type="pcre2">(\.onion|darkweb|dark-web|onion\.to|onion\.ws|onion\.ly)</regex>
     <description>Browser Dark Web: Dark web/.onion proxy access via $(data.browser)</description>
     <mitre>
       <id>T1090.003</id>
@@ -138,7 +144,7 @@
   <!-- 900112: Malware keyword in URL -->
   <rule id="900112" level="8">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">data\.url.*(malware|ransomware|trojan|keylogger|spyware|botnet|c2server|cnc-server|payload-delivery|dropper)(.*)</regex>
+    <regex type="pcre2">(malware|ransomware|trojan|keylogger|spyware|botnet|c2server|cnc-server|payload-delivery|dropper)</regex>
     <description>Browser Malware Keyword: Suspicious keyword in URL via $(data.browser)</description>
     <mitre>
       <id>T1566</id>
