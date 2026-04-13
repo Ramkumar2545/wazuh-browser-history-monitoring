@@ -119,15 +119,7 @@ sudo chmod 660 /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 ls -lah /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 ```
 
-**What's inside the decoder:**
-```xml
-<!-- /var/ossec/etc/decoders/0310-browser_history_decoder.xml -->
-<decoder name="browser-history">
-  <prematch>browser-monitor:</prematch>
-  <regex>(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) (\w+) (\S+) (https?://\S+) (.*)</regex>
-  <order>visit_time, browser, profile, url, title</order>
-</decoder>
-```
+
 
 ---
 
