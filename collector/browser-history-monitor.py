@@ -2,9 +2,9 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.1
+Version : 2.2
 Platform: Windows | Linux | macOS
-Browsers: Chrome, Edge, Brave, Firefox, Opera, Opera GX, Safari (macOS)
+Browsers: Chrome, Edge, Brave, Firefox (incl. Snap/Flatpak), Opera, Opera GX, Safari (macOS)
 
 Reads browser SQLite history databases every 60 seconds.
 Writes syslog-format lines to browser_history.log.
@@ -27,15 +27,15 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-# ─── CONFIGURATION ─────────────────────────────────────────────────────────────
+# --- CONFIGURATION ------------------------------------------------------------
 SCAN_INTERVAL = 60          # seconds between scans
 LOG_FILE_NAME = "browser_history.log"
 
-# ─── CONSTANTS ────────────────────────────────────────────────────────────────
+# --- CONSTANTS ----------------------------------------------------------------
 CHROME_EPOCH_DIFF = 11644473600   # Chrome timestamps: microseconds since 1601-01-01
 MAC_EPOCH_DIFF    = 978307200     # Safari timestamps: seconds since 2001-01-01
 
-# ─── HELPERS ───────────────────────────────────────────────────────────────────
+# --- HELPERS ------------------------------------------------------------------
 def chrome_time(ts):
     """Convert Chrome/Chromium microsecond timestamp to readable string."""
     if not ts:
@@ -67,31 +67,31 @@ def safari_time(ts):
         return str(ts)
 
 
-# ─── MAIN CLASS ──────────────────────────────────────────────────────────────────
+# --- MAIN CLASS ---------------------------------------------------------------
 class BrowserMonitor:
     def __init__(self):
-        self.os_type    = platform.system()   # 'Windows', 'Linux', 'Darwin'
-        self.hostname   = socket.gethostname()
-        self.user_home  = Path.home()
+        self.os_type     = platform.system()   # 'Windows', 'Linux', 'Darwin'
+        self.hostname    = socket.gethostname()
+        self.user_home   = Path.home()
         self.install_dir = self._get_install_dir()
         self.log_path    = self.install_dir / LOG_FILE_NAME
-        self.state_path  = self.user_home / ".browser_monitor_state.json"
+        self.state_path  = self.install_dir / ".browser_monitor_state.json"
         self.state       = self._load_state()
         self._setup_logging()
 
-    # ── paths ─────────────────────────────────────────────────────────────────
+    # -- paths -----------------------------------------------------------------
     def _get_install_dir(self):
-        # Windows  -> C:\BrowserMonitor  (shared location, Wazuh agent watches it)
-        # Linux    -> ~/.browser-monitor
-        # macOS    -> ~/.browser-monitor
+        # Windows -> C:\BrowserMonitor  (shared, Wazuh agent watches it)
+        # Linux   -> /root/.browser-monitor  (Wazuh agent runs as root)
+        # macOS   -> ~/.browser-monitor
         if self.os_type == "Windows":
             path = Path("C:/BrowserMonitor")
         else:
-            path = Path.home() / ".browser-monitor"
+            path = Path("/root/.browser-monitor")
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    # ── state persistence ────────────────────────────────────────────────────────
+    # -- state persistence -----------------------------------------------------
     def _load_state(self):
         if self.state_path.exists():
             try:
@@ -109,7 +109,7 @@ class BrowserMonitor:
             if hasattr(self, 'logger'):
                 self.logger.error("State save error: %s", e)
 
-    # ── logging ────────────────────────────────────────────────────────────────
+    # -- logging ---------------------------------------------------------------
     def _setup_logging(self):
         # Syslog-style: 'MMM DD HH:MM:SS hostname browser-monitor: message'
         # This is what the Wazuh decoder expects.
@@ -126,69 +126,111 @@ class BrowserMonitor:
         self.logger.addHandler(fh)
         self.logger.info("service_started")
 
-    # ── browser profile discovery ────────────────────────────────────────────────
+    # -- user home discovery (Linux: scan all users) ---------------------------
+    def _get_all_home_dirs(self):
+        """
+        On Linux, running as root means Path.home() = /root.
+        We need to scan ALL user home directories to find browsers.
+        Returns list of Path objects for each home dir that exists.
+        """
+        homes = set()
+        # Always include /root itself
+        homes.add(Path("/root"))
+        # Parse /etc/passwd for all users with a real home
+        try:
+            with open("/etc/passwd", "r") as f:
+                for line in f:
+                    parts = line.strip().split(":")
+                    if len(parts) >= 6:
+                        home = Path(parts[5])
+                        if home.exists() and str(home).startswith("/home"):
+                            homes.add(home)
+        except Exception:
+            pass
+        return list(homes)
+
+    # -- browser profile discovery ---------------------------------------------
     def _get_browser_roots(self):
-        """Returns list of (browser_name, root_path) for all supported browsers."""
+        """Returns list of (browser_name, username, root_path) for all supported browsers."""
         roots = []
         if self.os_type == "Windows":
             lad = os.environ.get('LOCALAPPDATA', '')
             apd = os.environ.get('APPDATA', '')
             if lad:
                 roots += [
-                    ("Chrome",  Path(lad) / "Google" / "Chrome" / "User Data"),
-                    ("Edge",    Path(lad) / "Microsoft" / "Edge" / "User Data"),
-                    ("Brave",   Path(lad) / "BraveSoftware" / "Brave-Browser" / "User Data"),
+                    ("Chrome",  "Default", Path(lad) / "Google" / "Chrome" / "User Data"),
+                    ("Edge",    "Default", Path(lad) / "Microsoft" / "Edge" / "User Data"),
+                    ("Brave",   "Default", Path(lad) / "BraveSoftware" / "Brave-Browser" / "User Data"),
                 ]
             if apd:
                 roots += [
-                    ("Opera",   Path(apd) / "Opera Software" / "Opera Stable"),
-                    ("OperaGX", Path(apd) / "Opera Software" / "Opera GX Stable"),
-                    ("Firefox", Path(apd) / "Mozilla" / "Firefox" / "Profiles"),
+                    ("Opera",   "Default", Path(apd) / "Opera Software" / "Opera Stable"),
+                    ("OperaGX", "Default", Path(apd) / "Opera Software" / "Opera GX Stable"),
+                    ("Firefox", "Default", Path(apd) / "Mozilla" / "Firefox" / "Profiles"),
                 ]
 
         elif self.os_type == "Darwin":
             lib = self.user_home / "Library" / "Application Support"
             roots += [
-                ("Chrome",  lib / "Google" / "Chrome"),
-                ("Edge",    lib / "Microsoft Edge"),
-                ("Brave",   lib / "BraveSoftware" / "Brave-Browser"),
-                ("Firefox", lib / "Firefox" / "Profiles"),
-                ("Opera",   lib / "com.operasoftware.Opera"),
-                ("Safari",  self.user_home / "Library" / "Safari"),
+                ("Chrome",  "Default", lib / "Google" / "Chrome"),
+                ("Edge",    "Default", lib / "Microsoft Edge"),
+                ("Brave",   "Default", lib / "BraveSoftware" / "Brave-Browser"),
+                ("Firefox", "Default", lib / "Firefox" / "Profiles"),
+                ("Opera",   "Default", lib / "com.operasoftware.Opera"),
+                ("Safari",  "Default", self.user_home / "Library" / "Safari"),
             ]
 
         elif self.os_type == "Linux":
-            cfg = self.user_home / ".config"
-            moz = self.user_home / ".mozilla"
-            roots += [
-                ("Chrome",   cfg / "google-chrome"),
-                ("Edge",     cfg / "microsoft-edge"),
-                ("Brave",    cfg / "BraveSoftware" / "Brave-Browser"),
-                ("Chromium", cfg / "chromium"),
-                ("Opera",    cfg / "opera"),
-                ("Firefox",  moz / "firefox"),
-            ]
+            for home in self._get_all_home_dirs():
+                username = home.name
+                cfg = home / ".config"
+                # Standard paths
+                roots += [
+                    ("Chrome",   username, cfg / "google-chrome"),
+                    ("Edge",     username, cfg / "microsoft-edge"),
+                    ("Brave",    username, cfg / "BraveSoftware" / "Brave-Browser"),
+                    ("Chromium", username, cfg / "chromium"),
+                    ("Opera",    username, cfg / "opera"),
+                    ("Firefox",  username, home / ".mozilla" / "firefox"),
+                    # Snap Firefox
+                    ("Firefox",  username, home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"),
+                    # Flatpak Firefox
+                    ("Firefox",  username, home / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox"),
+                    # Snap Chromium
+                    ("Chromium", username, home / "snap" / "chromium" / "current" / ".config" / "chromium"),
+                    # Snap Chrome
+                    ("Chrome",   username, home / "snap" / "google-chrome" / "current" / ".config" / "google-chrome"),
+                ]
         return roots
 
     def _find_profiles(self):
         """Walk each browser root and enumerate all profiles."""
         profiles = []
-        for name, root in self._get_browser_roots():
+        seen_dbs = set()   # avoid duplicate DB paths
+
+        for name, username, root in self._get_browser_roots():
             if not root.exists():
                 continue
 
             if name == "Safari":
                 db = root / "History.db"
-                if db.exists():
+                if db.exists() and str(db) not in seen_dbs:
+                    seen_dbs.add(str(db))
                     profiles.append({"browser": "Safari", "profile": "Default",
-                                     "db": db, "kind": "safari"})
+                                     "username": username, "db": db, "kind": "safari"})
                 continue
 
             if name == "Firefox":
-                for d in root.iterdir():
-                    if d.is_dir() and (d / "places.sqlite").exists():
-                        profiles.append({"browser": "Firefox", "profile": d.name,
-                                         "db": d / "places.sqlite", "kind": "firefox"})
+                try:
+                    for d in root.iterdir():
+                        if d.is_dir() and (d / "places.sqlite").exists():
+                            db = d / "places.sqlite"
+                            if str(db) not in seen_dbs:
+                                seen_dbs.add(str(db))
+                                profiles.append({"browser": "Firefox", "profile": d.name,
+                                                 "username": username, "db": db, "kind": "firefox"})
+                except PermissionError:
+                    continue
                 continue
 
             # Chromium-family: Default + Profile N
@@ -196,12 +238,13 @@ class BrowserMonitor:
                          [(d.name, d) for d in root.glob("Profile *") if d.is_dir()]
             for subdir_name, subdir_path in candidates:
                 db = subdir_path / "History"
-                if db.exists():
+                if db.exists() and str(db) not in seen_dbs:
+                    seen_dbs.add(str(db))
                     profiles.append({"browser": name, "profile": subdir_name,
-                                     "db": db, "kind": "chrome"})
+                                     "username": username, "db": db, "kind": "chrome"})
         return profiles
 
-    # ── extension monitoring ─────────────────────────────────────────────────────
+    # -- extension monitoring --------------------------------------------------
     def _scan_extensions(self, profile):
         exts = {}
         if profile["kind"] == "chrome":
@@ -244,24 +287,25 @@ class BrowserMonitor:
         current = self._scan_extensions(profile)
         if not current:
             return
-        key   = f"ext_{profile['browser']}_{profile['profile']}"
+        key   = f"ext_{profile['username']}_{profile['browser']}_{profile['profile']}"
         known = self.state.get(key, {})
         for eid, info in current.items():
             if eid not in known or known[eid]["version"] != info["version"]:
                 self.logger.info(
-                    "[Extension] %s %s \"%s\" (%s) v%s",
-                    profile['browser'], profile['profile'],
+                    "[Extension] %s %s %s \"%s\" (%s) v%s",
+                    profile['username'], profile['browser'], profile['profile'],
                     info['name'], eid, info['version']
                 )
         self.state[key] = current
 
-    # ── history processing ───────────────────────────────────────────────────────
+    # -- history processing ----------------------------------------------------
     def _process_history(self, profile):
-        state_key      = f"hist_{profile['browser']}_{profile['profile']}"
+        state_key      = f"hist_{profile['username']}_{profile['browser']}_{profile['profile']}"
         last_scan_time = self.state.get(state_key, 0)
 
         # Copy DB to temp to avoid locked-file issues (browser may be open)
-        tmp = Path(tempfile.gettempdir()) / f"bhm_{state_key.replace('/', '_')}.sqlite"
+        safe_key = state_key.replace('/', '_').replace(' ', '_')
+        tmp = Path(tempfile.gettempdir()) / f"bhm_{safe_key}.sqlite"
         try:
             shutil.copy2(profile["db"], tmp)
         except Exception:
@@ -309,17 +353,16 @@ class BrowserMonitor:
                     readable = firefox_time(raw_time)
                 else:
                     readable = safari_time(raw_time)
-                # Strip newlines from title to keep syslog single-line
                 clean_title = (title or "No Title").replace('\n', ' ').replace('\r', '')
                 self.logger.info(
-                    "%s %s %s %s %s",
-                    readable, profile['browser'], profile['profile'],
-                    url, clean_title
+                    "%s %s %s %s %s %s",
+                    readable, profile['browser'], profile['username'],
+                    profile['profile'], url, clean_title
                 )
 
         except Exception as e:
-            self.logger.error("DB query error [%s %s]: %s",
-                              profile['browser'], profile['profile'], e)
+            self.logger.error("DB query error [%s %s %s]: %s",
+                              profile['username'], profile['browser'], profile['profile'], e)
         finally:
             if conn:
                 conn.close()
@@ -330,11 +373,14 @@ class BrowserMonitor:
 
         self.state[state_key] = new_max
 
-    # ── main loop ─────────────────────────────────────────────────────────────────
+    # -- main loop -------------------------------------------------------------
     def run(self):
         try:
             while True:
-                for profile in self._find_profiles():
+                profiles = self._find_profiles()
+                if not profiles and self.os_type == "Linux":
+                    self.logger.warning("no_browser_profiles_found — check user home dirs")
+                for profile in profiles:
                     self._process_extensions(profile)
                     self._process_history(profile)
                 self._save_state()
