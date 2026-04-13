@@ -450,11 +450,7 @@ wazuh-browser-history-monitoring/
 
 ---
 
-## Credits
 
-Inspired by [bayusky/wazuh-custom-rules-and-decoders](https://github.com/bayusky/wazuh-custom-rules-and-decoders/tree/main/browser-monitoring) and the [Medium article](https://medium.com/@bayusangkaya/unlocking-endpoint-visibility-real-time-browser-history-monitoring-with-wazuh-8459b86d3e14) by Bayu Sangkaya.
-
-Rebuilt by **Ram Kumar G (IT Fortress)** — rewritten to be VT-clean (no `Invoke-WebRequest`, no exe downloads, no remote script fetching) and extended with macOS support, MITRE mapping, and full multi-profile detection.
 
 ---
 
