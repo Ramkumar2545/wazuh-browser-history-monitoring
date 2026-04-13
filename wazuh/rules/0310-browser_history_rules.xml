@@ -159,4 +159,10 @@
     <group>browser_history,service_lifecycle,</group>
   </rule>
 
+  <rule id="900114" level="0">
+    <if_matched_group>browser_history</if_matched_group>
+    <field name="mon_page_title">^No Title$</field>
+   <description>Browser redirect hop — no title, suppressed</description>
+</rule>
+
 </group>
