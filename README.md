@@ -1,6 +1,6 @@
 # 🌐 Wazuh Browser History Monitoring
 
-> **Real-time browser history monitoring** integrated with **Wazuh SIEM** — monitor Chrome, Edge, Brave, Firefox, Opera, and Safari across **Windows, Linux, and macOS** endpoints with security alerts on the Wazuh Dashboard.
+> **Real-time browser history monitoring** integrated with **Wazuh SIEM** — monitor Chrome, Edge, Brave, Firefox (incl. Snap/Flatpak), Opera, Vivaldi, Waterfox, Tor, and Safari across **Windows, Linux, and macOS** endpoints with security alerts on the Wazuh Dashboard.
 
 [![Wazuh](https://img.shields.io/badge/Wazuh-4.x-blue?style=flat-square)](https://wazuh.com)
 [![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square)](#)
@@ -22,7 +22,7 @@
   - [1.3 Update ossec.conf (Manager)](#13--update-ossecconf-on-manager-optional--centralised-log-pull)
   - [1.4 Validate & Restart](#14--validate--restart-manager)
   - [1.5 Test with wazuh-logtest](#15--test-with-wazuh-logtest)
-- [🚀 PHASE 2 — Endpoint One-Liner Deploy](#-phase-2--endpoint-one-liner-deploy)
+- [🚀 PHASE 2 — Endpoint Deploy](#-phase-2--endpoint-deploy)
   - [Windows](#-windows-endpoint)
   - [Linux](#-linux-endpoint)
   - [macOS](#-macos-endpoint)
@@ -47,7 +47,7 @@
           ┌─────────────────────┼─────────────────────┐
           ▼                     ▼                     ▼
    Windows Endpoint       Linux Endpoint       macOS Endpoint
-  (Scheduled Task)      (systemd user svc)  (LaunchAgent)
+  (Scheduled Task)     (systemd SYSTEM svc)  (LaunchAgent)
           │                     │                     │
    browser-history-monitor.py  ←  reads SQLite DBs every 60s
           │
@@ -57,10 +57,10 @@
 ```
 
 **Flow:**
-1. Collector reads browser SQLite DBs every 60 seconds
-2. Writes new visits as `syslog+JSON` lines to a log file
+1. Collector reads browser SQLite DBs every 60 seconds (all users, all install types)
+2. Writes new visits as syslog-format lines to a log file
 3. Wazuh agent ships the log file to the manager
-4. Decoder parses fields (browser, URL, profile, user, host)
+4. Decoder parses fields (`browser`, `url`, `profile`, `username`, `hostname`)
 5. Rules fire alerts based on URL patterns & risk categories
 6. Alerts appear in Wazuh Dashboard with MITRE ATT&CK mapping
 
@@ -68,15 +68,20 @@
 
 ## Supported Browsers
 
-| Browser | Windows | Linux | macOS |
-|---|---|---|---|
-| Google Chrome | ✅ | ✅ | ✅ |
-| Microsoft Edge | ✅ | ✅ | ✅ |
-| Brave | ✅ | ✅ | ✅ |
-| Firefox | ✅ | ✅ | ✅ |
-| Opera / Opera GX | ✅ | ✅ | ✅ |
-| Safari | ❌ | ❌ | ✅ |
-| Chromium | ❌ | ✅ | ❌ |
+| Browser | Windows | Linux (Standard) | Linux (Snap) | Linux (Flatpak) | macOS |
+|---|---|---|---|---|---|
+| Google Chrome | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Microsoft Edge | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Brave | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Firefox | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Opera / Opera GX | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Vivaldi | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Chromium | ❌ | ✅ | ✅ | ✅ | ❌ |
+| Waterfox | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Tor Browser | ✅ | ✅ | ❌ | ✅ | ❌ |
+| Safari | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+> ✅ The collector auto-detects all install types — no configuration needed.
 
 ---
 
@@ -94,15 +99,13 @@
 
 ---
 
----
-
 ## ⚙️ PHASE 1 — Wazuh Manager Setup *(Do this ONCE on the Manager)*
 
-> 🖥️ These steps run **only on your Wazuh Manager server** and enable detection for ALL enrolled endpoints automatically. No per-endpoint changes needed on the manager side.
+> 🖥️ These steps run **only on your Wazuh Manager server** and enable detection for ALL enrolled endpoints automatically.
 
 ### 1.1 — Deploy the Decoder
 
-The decoder teaches Wazuh how to parse the browser history log lines into structured fields (`browser`, `url`, `profile`, `user`, `hostname`).
+The decoder teaches Wazuh how to parse browser history log lines into structured fields.
 
 ```bash
 # Clone the repo
@@ -115,15 +118,13 @@ sudo cp wazuh/decoders/0310-browser_history_decoder.xml /var/ossec/etc/decoders/
 sudo chown wazuh:wazuh /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 sudo chmod 660 /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 
-# Verify it was copied
+# Verify
 ls -lah /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 ```
 
 ---
 
 ### 1.2 — Deploy the Rules
-
-The rules define what gets alerted — 13 rules covering dangerous downloads, phishing pages, anonymizer tools, data exfiltration sites, dark web proxies, and more.
 
 ```bash
 # Copy rules
@@ -135,7 +136,7 @@ sudo chmod 660 /var/ossec/etc/rules/0310-browser_history_rules.xml
 ls -lah /var/ossec/etc/rules/0310-browser_history_rules.xml
 ```
 
-**Rules summary — what fires an alert:**
+**Rules summary:**
 
 | Rule ID | Level | Category | Example Match |
 |---|---|---|---|
@@ -156,11 +157,9 @@ ls -lah /var/ossec/etc/rules/0310-browser_history_rules.xml
 
 ---
 
-### 1.3 — Update `ossec.conf` on Manager *(Optional — Centralised Log Pull)*
+### 1.3 — Update `ossec.conf` on Manager *(Optional — Centralised Config)*
 
-> This step is only needed if you want the **manager** to directly pull log files from agents using agent-less or shared config. In most deployments, the **agent's** `ossec.conf` handles the `<localfile>` (done automatically in Phase 2). Skip this step unless you use centralised config.
-
-If you use **centralised configuration** (agent groups), add to the agent group's shared `agent.conf`:
+> Only needed if you use **agent groups** for centralised config. Otherwise the agent's `ossec.conf` is patched automatically in Phase 2.
 
 ```bash
 sudo nano /var/ossec/etc/shared/default/agent.conf
@@ -180,7 +179,7 @@ Add inside `<agent_config>`:
 <!-- Browser Monitor: Linux -->
 <agent_config os="Linux">
   <localfile>
-    <location>/home/*/.browser-monitor/browser_history.log</location>
+    <location>/root/.browser-monitor/browser_history.log</location>
     <log_format>syslog</log_format>
   </localfile>
 </agent_config>
@@ -188,15 +187,10 @@ Add inside `<agent_config>`:
 <!-- Browser Monitor: macOS -->
 <agent_config os="Darwin">
   <localfile>
-    <location>/Users/*/.browser-monitor/browser_history.log</location>
+    <location>/root/.browser-monitor/browser_history.log</location>
     <log_format>syslog</log_format>
   </localfile>
 </agent_config>
-```
-
-Save and reload:
-```bash
-sudo systemctl restart wazuh-manager
 ```
 
 ---
@@ -204,18 +198,12 @@ sudo systemctl restart wazuh-manager
 ### 1.4 — Validate & Restart Manager
 
 ```bash
-# Check for ERROR or CRITICAL — should show no issues
+# Validate — should output no ERROR or CRITICAL lines
 sudo /var/ossec/bin/wazuh-analysisd -t
 
-# Restart manager
+# Restart
 sudo systemctl restart wazuh-manager
 sudo systemctl status wazuh-manager
-```
-
-Expected output:
-```
-● wazuh-manager.service - Wazuh manager
-   Active: active (running)
 ```
 
 ---
@@ -226,84 +214,110 @@ Expected output:
 sudo /var/ossec/bin/wazuh-logtest
 ```
 
-Paste this test line when prompted:
+Paste this test line:
 ```
-Apr 13 06:27:55 WIN-ENDPOINT browser-monitor: 2026-04-13 06:27:55 Chrome Default https://pastebin.com/xyz No Title
-```
-
-**Expected Phase 3 result:**
-```
-** Alert to be generated.
-Rule id: '900104'
-Level: '7'
-Description: 'Browser Data-Sharing Site: Paste/upload site visited via Chrome'
+Apr 13 22:41:00 agent browser-monitor: 2026-04-13 22:41:00 Chrome agent Default https://pastebin.com/xyz Pastebin
 ```
 
-✅ **Phase 1 complete — Manager is ready. All enrolled agents will now have active detection.**
+Expected output:
+```
+**Phase 1: Completed pre-decoding.
+    program_name: 'browser-monitor'
+
+**Phase 2: Completed decoding.
+    name: 'browser-monitor-log-fields'
+    mon_browse_time: '2026-04-13 22:41:00'
+    mon_browser_name: 'Chrome'
+    mon_browser_profile: 'Default'
+    mon_url: 'https://pastebin.com/xyz'
+    mon_page_title: 'Pastebin'
+
+**Phase 3: Completed filtering (rules).
+    id: '900104'
+    level: '7'
+    description: 'Browser Data-Sharing Site visited'
+```
+
+✅ **Phase 1 complete — Manager is ready.**
 
 ---
 
 ---
 
-## 🚀 PHASE 2 — Endpoint One-Liner Deploy
+## 🚀 PHASE 2 — Endpoint Deploy
 
-> These commands run **on each endpoint** (Windows, Linux, or macOS).  
-> No manual file copying. The one-liner downloads only the Python collector from your own public repo — no EXE downloads, no third-party URLs.
-
-### ✅ What the One-Liner Does Automatically
-
-| Step | Action |
-|---|---|
-| ① | Checks for **Administrator/root** privileges |
-| ② | Detects **System-Wide Python 3** (fails cleanly if missing with install instructions) |
-| ③ | Creates install directory with correct ACL permissions |
-| ④ | Downloads **only** `browser-history-monitor.py` from `github.com/Ramkumar2545` |
-| ⑤ | Creates **Scheduled Task / systemd service / LaunchAgent** (runs hidden at every logon) |
-| ⑥ | Creates **All-Users Startup shortcut** (Windows failsafe) |
-| ⑦ | Auto-patches `ossec.conf` with the correct `<localfile>` block |
-| ⑧ | Restarts **Wazuh agent** |
-| ⑨ | Starts monitoring **immediately** |
+> Run these steps **on each endpoint** you want to monitor.  
+> The installer handles everything: service creation, ossec.conf patching, and agent restart.
 
 ---
 
 ### 🪟 Windows Endpoint
 
-> Open **PowerShell as Administrator** and run:
+#### Step 1 — Install Python (if not already installed)
+
+1. Download from [https://python.org/downloads](https://python.org/downloads)
+2. During install, check **both**:
+   - ✅ Install for All Users
+   - ✅ Add Python to PATH
+3. Verify: open PowerShell and run `python --version`
+
+#### Step 2 — Run Installer
+
+Open **PowerShell as Administrator**:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; iwr -UseBasicParsing 'https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main/install.ps1' | iex"
 ```
 
-**Pre-requirement — Python must be installed first:**
-```
-If Python is missing, the script stops and shows:
+**The installer automatically:**
+- Downloads `browser-history-monitor.py` to `C:\BrowserMonitor\`
+- Creates a **Scheduled Task** (`BrowserHistoryMonitor`) that runs at every user logon
+- Adds a `<localfile>` block to `C:\Program Files (x86)\ossec-agent\ossec.conf`
+- Restarts the Wazuh agent service
+- Starts monitoring immediately
 
-  ACTION REQUIRED:
-  1. Download from: https://python.org/downloads
-  2. During install, CHECK:
-       [x] Install for All Users
-       [x] Add Python to PATH
-  3. Re-run the one-liner.
-```
+#### Step 3 — Verify Installation
 
-**Verify after install:**
 ```powershell
-# Watch live browser history log
+# Check collector is writing logs
 Get-Content 'C:\BrowserMonitor\browser_history.log' -Tail 20 -Wait
 
-# Check scheduled task
-Get-ScheduledTask -TaskName 'BrowserHistoryMonitor'
+# Check scheduled task status
+Get-ScheduledTask -TaskName 'BrowserHistoryMonitor' | Select-Object TaskName, State
 
-# Check Wazuh agent is running
+# Check Wazuh agent
 Get-Service WazuhSvc
+
+# Check ossec.conf was patched
+Select-String 'BrowserMonitor' 'C:\Program Files (x86)\ossec-agent\ossec.conf'
 ```
 
-**Expected log format:**
+#### Step 4 — Expected Log Format
+
 ```
-Apr 13 11:00:01 WIN-PC browser-monitor: 2026-04-13 11:00:01 Chrome Default https://google.com Google
+Apr 13 11:00:01 WIN-PC browser-monitor: 2026-04-13 11:00:01 Chrome JohnDoe Default https://google.com Google
 ```
 
-**Uninstall:**
+Fields: `timestamp browser username profile url title`
+
+#### Step 5 — Manual ossec.conf Patch (if not auto-applied)
+
+Edit `C:\Program Files (x86)\ossec-agent\ossec.conf` and add before `</ossec_config>`:
+
+```xml
+<localfile>
+  <location>C:\BrowserMonitor\browser_history.log</location>
+  <log_format>syslog</log_format>
+</localfile>
+```
+
+Then restart the agent:
+```powershell
+Restart-Service WazuhSvc
+```
+
+#### Uninstall
+
 ```powershell
 Unregister-ScheduledTask -TaskName 'BrowserHistoryMonitor' -Confirm:$false
 Remove-Item 'C:\BrowserMonitor' -Recurse -Force
@@ -313,7 +327,9 @@ Remove-Item 'C:\BrowserMonitor' -Recurse -Force
 
 ### 🐧 Linux Endpoint
 
-> Run in terminal:
+> **Important:** The collector runs as **root** (via systemd SYSTEM service) so it can read browser profiles from all users on the machine — including snap/flatpak installs.
+
+#### Step 1 — Run Installer
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main/install.sh | bash
@@ -324,74 +340,167 @@ Or with wget:
 wget -qO- https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main/install.sh | bash
 ```
 
-**Verify after install:**
+**The installer automatically:**
+- Detects Python 3 at `/usr/bin/python3`
+- Downloads `browser-history-monitor.py` to `/root/.browser-monitor/`
+- Creates a **systemd SYSTEM service** (`browser-monitor`) at `/etc/systemd/system/browser-monitor.service`
+- Adds a `<localfile>` block to `/var/ossec/etc/ossec.conf`
+- Restarts the Wazuh agent
+- Starts monitoring immediately
+
+#### Step 2 — Verify Installation
+
 ```bash
-# Check systemd user service
-systemctl --user status browser-monitor
+# Check service status (use SYSTEM — not --user)
+systemctl status browser-monitor
 
-# Watch live logs
-tail -f ~/.browser-monitor/browser_history.log
+# Check service logs
+journalctl -u browser-monitor -n 20 --no-pager
 
-# Check Wazuh agent
-sudo systemctl status wazuh-agent
+# Watch live browser history log
+tail -f /root/.browser-monitor/browser_history.log
+
+# Confirm ossec.conf was patched
+grep -A3 'browser' /var/ossec/etc/ossec.conf
+
+# Check Wazuh agent is running
+systemctl status wazuh-agent
 ```
 
-**Manual ossec.conf patch (if not auto-applied):**
+#### Step 3 — Expected Log Format
+
+Once a browser is used on the machine, log lines appear like:
+
+```
+Apr 13 22:50:01 agent browser-monitor: 2026-04-13 22:50:01 Firefox agent 2h0c42a3.default https://github.com GitHub
+Apr 13 22:50:15 agent browser-monitor: 2026-04-13 22:50:15 Chrome agent Default https://google.com Google Search
+```
+
+Fields: `timestamp browser username profile url title`
+
+#### Step 4 — Browser Profile Paths Scanned (Linux)
+
+The collector scans **all home directories** from `/etc/passwd` and checks the following paths per user:
+
+| Browser | Standard | Snap | Flatpak |
+|---|---|---|---|
+| Firefox | `~/.mozilla/firefox/` | `~/snap/firefox/common/.mozilla/firefox/` | `~/.var/app/org.mozilla.firefox/.mozilla/firefox/` |
+| Chrome | `~/.config/google-chrome/` | `~/snap/google-chrome/current/.config/google-chrome/` | `~/.var/app/com.google.Chrome/.config/google-chrome/` |
+| Chromium | `~/.config/chromium/` | `~/snap/chromium/current/.config/chromium/` | `~/.var/app/org.chromium.Chromium/.config/chromium/` |
+| Edge | `~/.config/microsoft-edge/` | `~/snap/microsoft-edge/current/.config/microsoft-edge/` | `~/.var/app/com.microsoft.Edge/.config/microsoft-edge/` |
+| Brave | `~/.config/BraveSoftware/Brave-Browser/` | `~/snap/brave/current/.config/BraveSoftware/Brave-Browser/` | `~/.var/app/com.brave.Browser/.config/BraveSoftware/Brave-Browser/` |
+| Opera | `~/.config/opera/` | `~/snap/opera/current/.config/opera/` | `~/.var/app/com.opera.Opera/.config/opera/` |
+| Vivaldi | `~/.config/vivaldi/` | `~/snap/vivaldi/current/.config/vivaldi/` | `~/.var/app/com.vivaldi.Vivaldi/.config/vivaldi/` |
+| Waterfox | `~/.waterfox/` | ❌ | `~/.var/app/net.waterfox.waterfox/.waterfox/` |
+| Tor | `~/.tor-browser/.../profile.default/` | ❌ | `~/.var/app/com.github.micahflee.torbrowser-launcher/.../profile.default/` |
+
+#### Step 5 — Manual ossec.conf Patch (if not auto-applied)
+
 ```bash
 sudo nano /var/ossec/etc/ossec.conf
 ```
-Add inside `<ossec_config>`:
+
+Add before the closing `</ossec_config>` tag:
+
 ```xml
 <localfile>
-  <location>/home/YOUR_USERNAME/.browser-monitor/browser_history.log</location>
+  <location>/root/.browser-monitor/browser_history.log</location>
   <log_format>syslog</log_format>
 </localfile>
 ```
+
+Restart agent:
 ```bash
 sudo systemctl restart wazuh-agent
 ```
 
-**Uninstall:**
+#### Step 6 — Service Management
+
 ```bash
-systemctl --user stop browser-monitor && systemctl --user disable browser-monitor
-rm ~/.config/systemd/user/browser-monitor.service
-rm -rf ~/.browser-monitor
+# Start / Stop / Restart
+systemctl start browser-monitor
+systemctl stop browser-monitor
+systemctl restart browser-monitor
+
+# View last 50 log lines from journald
+journalctl -u browser-monitor -n 50 --no-pager
+
+# Update collector to latest version
+systemctl stop browser-monitor
+curl -sSL https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main/collector/browser-history-monitor.py \
+  -o /root/.browser-monitor/browser-history-monitor.py
+systemctl start browser-monitor
 ```
+
+#### Uninstall
+
+```bash
+systemctl stop browser-monitor
+systemctl disable browser-monitor
+rm /etc/systemd/system/browser-monitor.service
+systemctl daemon-reload
+rm -rf /root/.browser-monitor
+```
+
+#### Common Issues — Linux
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Failed to connect to bus: No medium found` on `systemctl --user` | Service runs as SYSTEM, not user | Use `systemctl status browser-monitor` (no `--user`) |
+| Log only shows `service_started`, no visit lines | No browser profiles found under scanned paths | Run `find / -name 'places.sqlite' 2>/dev/null` to locate Firefox; `find / -name 'History' -path '*/chrome/*' 2>/dev/null` for Chrome |
+| `SyntaxWarning: invalid escape sequence` in journalctl | Old collector version cached on disk | Pull latest: `curl ... -o /root/.browser-monitor/browser-history-monitor.py` then `systemctl restart browser-monitor` |
+| `no_browser_profiles_found` in log | Collector found no browser DBs | Confirm browser is installed and has been launched at least once to create profile |
+| ossec.conf has duplicate `<localfile>` block | Installer ran twice | Remove duplicate manually with `nano /var/ossec/etc/ossec.conf` |
 
 ---
 
 ### 🍎 macOS Endpoint
 
-> Run in terminal:
+#### Step 1 — Run Installer
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main/install.sh | bash
 ```
 
-**⚠️ Required after install — Grant Full Disk Access:**
+**The installer automatically:**
+- Downloads `browser-history-monitor.py` to `~/.browser-monitor/`
+- Creates a **LaunchAgent** plist at `~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist`
+- Loads the agent (starts immediately)
+- Adds `<localfile>` to `/var/ossec/etc/ossec.conf`
+- Restarts the Wazuh agent
 
-macOS TCC protection blocks access to browser databases without this:
+#### Step 2 — Grant Full Disk Access (Required on macOS)
+
+macOS TCC protection blocks access to browser databases without this step:
 
 1. Open **System Settings** → **Privacy & Security** → **Full Disk Access**
-2. Click **+** → add your Python binary:
+2. Click **+** and add your Python binary:
    ```bash
    which python3
-   # e.g. /opt/homebrew/bin/python3
+   # e.g. /opt/homebrew/bin/python3 or /usr/bin/python3
    ```
 3. Toggle it **ON**
-4. Reload the agent:
+4. Reload the LaunchAgent:
    ```bash
    launchctl unload ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
-   launchctl load ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
+   launchctl load  ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
    ```
 
-**Verify:**
+#### Step 3 — Verify
+
 ```bash
+# Check LaunchAgent is loaded
 launchctl list | grep browser-monitor
+
+# Watch live log
 tail -f ~/.browser-monitor/browser_history.log
+
+# Check Wazuh agent
+sudo /Library/Ossec/bin/wazuh-control status
 ```
 
-**Uninstall:**
+#### Uninstall
+
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
 rm ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
@@ -404,10 +513,10 @@ rm -rf ~/.browser-monitor
 
 ## Step 5 — Verify in Dashboard
 
-### 5.1 — Check Logs on Manager
+### 5.1 — Check Archives on Manager
 
 ```bash
-# Archives (all events)
+# All events received
 sudo grep 'browser-monitor' /var/ossec/logs/archives/archives.log | tail -10
 
 # Alerts only (rules triggered)
@@ -419,12 +528,12 @@ sudo grep 'browser-monitor' /var/ossec/logs/alerts/alerts.log | tail -10
 1. Open **Wazuh Dashboard** → **Discover**
 2. Index: `wazuh-alerts-*`
 3. Time range: **Last 24 hours**
-4. Search: `rule.groups: "browser_history"`
-5. Add columns:
+4. Filter: `rule.groups: browser_history`
+5. Useful columns to add:
    - `agent.name`
-   - `data.browser`
-   - `data.url`
-   - `data.profile`
+   - `data.mon_browser_name`
+   - `data.mon_url`
+   - `data.mon_browser_profile`
    - `rule.description`
    - `rule.level`
 
@@ -439,6 +548,24 @@ Open a browser on a monitored endpoint and visit:
 | `https://mega.nz` | 900104 — Data Exfil | 7 |
 | `https://torproject.org` | 900103 — Anonymizer | 8 |
 | `https://exploit-db.com` | 900110 — Exploit site | 9 |
+
+### 5.4 — Manual Test via wazuh-logtest (No Browser Needed)
+
+```bash
+sudo /var/ossec/bin/wazuh-logtest
+```
+
+Paste:
+```
+Apr 13 22:41:00 agent browser-monitor: 2026-04-13 22:41:00 Chrome agent Default https://google.com Google Search
+```
+
+Expect rule `900100` (level 2 baseline) to fire. For a high-severity test:
+```
+Apr 13 22:41:00 agent browser-monitor: 2026-04-13 22:41:00 Firefox agent default https://torproject.org Tor Project
+```
+
+Expect rule `900103` (level 8 anonymizer) to fire.
 
 ---
 
@@ -467,16 +594,18 @@ Open a browser on a monitored endpoint and visit:
 
 | Problem | Fix |
 |---|---|
-| Log file empty (Windows) | `Start-ScheduledTask -TaskName 'BrowserHistoryMonitor'` |
-| Scheduled task not running | `Get-ScheduledTask -TaskName 'BrowserHistoryMonitor' \| Select-Object State` |
-| Linux service fails | `systemctl --user status browser-monitor` + `journalctl --user -u browser-monitor -n 50` |
-| macOS permission denied | Grant Full Disk Access to python3 — see Phase 2 macOS section |
-| No alerts in dashboard | Run `sudo /var/ossec/bin/wazuh-logtest` → paste a test log line → check Phase 3 output |
-| analysisd test error | `sudo /var/ossec/bin/wazuh-analysisd -t` — look for ERROR lines |
-| Agent not forwarding | Check `ossec.conf` has the correct `<localfile>` block pointing to the log file |
-| Python not found (Windows) | Reinstall Python: check "Install for All Users" + "Add to PATH" |
-| ossec.conf not updated | Add `<localfile>` block manually — see Phase 2 manual patch section |
-| Rule ID conflict | Remove old 110100–110114 blocks from `local_rules.xml` if they exist |
+| `Failed to connect to bus` on `--user` (Linux) | Use `systemctl status browser-monitor` (SYSTEM service — no `--user` flag) |
+| Log only has `service_started`, no visits | No browser profiles found — run `find / -name 'places.sqlite' 2>/dev/null` to locate Firefox DB |
+| `SyntaxWarning: invalid escape sequence` | Old collector file — re-download: `curl -sSL .../browser-history-monitor.py -o /root/.browser-monitor/browser-history-monitor.py` |
+| `no_browser_profiles_found` in log | Browser not installed or never launched — open browser once to create profile |
+| Duplicate `<localfile>` in ossec.conf | Installer ran twice — remove duplicate block manually |
+| No alerts in Dashboard | Run `wazuh-logtest` with a test line — check Phase 3 output for rule match |
+| macOS: permission denied on browser DB | Grant Full Disk Access to python3 in System Settings → Privacy & Security |
+| Windows: log file empty | Run `Start-ScheduledTask -TaskName 'BrowserHistoryMonitor'` |
+| Windows: Python not found | Reinstall Python — check "Install for All Users" + "Add to PATH" |
+| Agent not forwarding to manager | Confirm `<localfile>` block is in `ossec.conf` pointing to correct log path |
+| analysisd validation error | `sudo /var/ossec/bin/wazuh-analysisd -t` — look for ERROR lines in decoder/rule XML |
+| Rule ID conflict | Remove any old 110100–110114 blocks from `local_rules.xml` |
 
 ---
 
@@ -489,14 +618,14 @@ wazuh-browser-history-monitoring/
 ├── install.ps1                                  ← Windows one-liner bootstrap
 ├── install.sh                                   ← Linux/macOS one-liner bootstrap
 ├── collector/
-│   └── browser-history-monitor.py              ← Python collector (Win/Linux/macOS)
+│   └── browser-history-monitor.py              ← Python collector v2.3 (Win/Linux/macOS)
 ├── installers/
 │   ├── windows-installer.ps1                   ← Windows full installer (VT-clean)
-│   ├── linux-installer.sh                      ← Linux installer (systemd user svc)
+│   ├── linux-installer.sh                      ← Linux installer (systemd SYSTEM service)
 │   └── macos-installer.sh                      ← macOS installer (LaunchAgent)
 └── wazuh/
     ├── decoders/
-    │   └── 0310-browser_history_decoder.xml    ← Wazuh decoder (v2.3)
+    │   └── 0310-browser_history_decoder.xml    ← Wazuh decoder
     └── rules/
         └── 0310-browser_history_rules.xml      ← 13 detection rules (MITRE mapped, IDs 900100–900113)
 ```
