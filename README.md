@@ -292,7 +292,36 @@ Get-Service WazuhSvc
 Select-String 'BrowserMonitor' 'C:\Program Files (x86)\ossec-agent\ossec.conf'
 ```
 
-#### Step 4 — Expected Log Format
+#### Step 4 — Verify Browser Profiles are Detected
+
+Run these in PowerShell to confirm the collector can find browser history databases:
+
+```powershell
+# Find ALL Chrome/Edge/Brave History SQLite files
+Get-ChildItem -Path "$env:LOCALAPPDATA" -Recurse -Filter "History" -ErrorAction SilentlyContinue `
+  | Where-Object { $_.DirectoryName -match 'Chrome|Edge|Brave|Vivaldi|Opera' } `
+  | Select-Object FullName
+
+# Find ALL Firefox places.sqlite files
+Get-ChildItem -Path "$env:APPDATA\Mozilla\Firefox\Profiles" -Recurse -Filter "places.sqlite" -ErrorAction SilentlyContinue `
+  | Select-Object FullName
+
+# Check which user is logged in and running browsers
+Get-Process -Name 'chrome','msedge','brave','firefox','opera','vivaldi' -ErrorAction SilentlyContinue `
+  | Select-Object Name, Id, @{N='User';E={(Get-WmiObject Win32_Process -Filter "ProcessId=$($_.Id)").GetOwner().User}}
+
+# Confirm collector process is running
+Get-Process -Name python* -ErrorAction SilentlyContinue | Select-Object Id, Name, Path
+
+# Check current Windows username
+$env:USERNAME
+```
+
+**What to look for:**
+- If `History` or `places.sqlite` files appear → collector will detect them within 60 seconds
+- If nothing appears → browser has never been opened; open it and browse once, then re-check
+
+#### Step 5 — Expected Log Format
 
 ```
 Apr 13 11:00:01 WIN-PC browser-monitor: 2026-04-13 11:00:01 Chrome JohnDoe Default https://google.com Google
@@ -300,7 +329,7 @@ Apr 13 11:00:01 WIN-PC browser-monitor: 2026-04-13 11:00:01 Chrome JohnDoe Defau
 
 Fields: `timestamp browser username profile url title`
 
-#### Step 5 — Manual ossec.conf Patch (if not auto-applied)
+#### Step 6 — Manual ossec.conf Patch (if not auto-applied)
 
 Edit `C:\Program Files (x86)\ossec-agent\ossec.conf` and add before `</ossec_config>`:
 
@@ -351,7 +380,7 @@ wget -qO- https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-m
 #### Step 2 — Verify Installation
 
 ```bash
-# Check service status (use SYSTEM — not --user)
+# Check service status (SYSTEM service — do NOT use --user)
 systemctl status browser-monitor
 
 # Check service logs
@@ -367,20 +396,45 @@ grep -A3 'browser' /var/ossec/etc/ossec.conf
 systemctl status wazuh-agent
 ```
 
-#### Step 3 — Expected Log Format
+#### Step 3 — Verify Browser Profiles are Detected
 
-Once a browser is used on the machine, log lines appear like:
+Run these to confirm the collector can find browser history databases on your system:
 
+```bash
+# Find ALL Firefox places.sqlite files across the entire system
+find / -name "places.sqlite" 2>/dev/null
+
+# Find ALL Firefox profile directories (standard + snap + flatpak)
+find / -name "*.default*" -path "*/firefox/*" -type d 2>/dev/null
+
+# Find ALL Chrome/Edge/Brave/Chromium History SQLite files
+find / -name "History" -path "*/Default/*" 2>/dev/null
+find / -name "History" -path "*/Profile*/*" 2>/dev/null
+
+# Check which user is running the browser
+ps aux | grep -iE 'firefox|chrome|brave|edge|chromium|opera|vivaldi'
+
+# Check all user home directories on this machine
+cat /etc/passwd | grep -v nologin | grep -v false | awk -F: '{print $1, $6}'
+
+# Confirm collector process is running
+ps aux | grep browser-history
 ```
-Apr 13 22:50:01 agent browser-monitor: 2026-04-13 22:50:01 Firefox agent 2h0c42a3.default https://github.com GitHub
-Apr 13 22:50:15 agent browser-monitor: 2026-04-13 22:50:15 Chrome agent Default https://google.com Google Search
-```
 
-Fields: `timestamp browser username profile url title`
+**What to look for:**
+
+| Output | Meaning |
+|---|---|
+| `places.sqlite` paths appear | ✅ Firefox detected — collector will pick it up |
+| `History` paths appear | ✅ Chrome-family detected |
+| Browser running as user `agent` | Collector scans `/home/agent` automatically via `/etc/passwd` |
+| Firefox under `snap/firefox/common/...` | ✅ Snap Firefox — collector has this path built-in |
+| Firefox under `.var/app/org.mozilla.firefox/...` | ✅ Flatpak Firefox — built-in |
+| No paths found | Browser never opened — launch it and browse once |
 
 #### Step 4 — Browser Profile Paths Scanned (Linux)
 
-The collector scans **all home directories** from `/etc/passwd` and checks the following paths per user:
+The collector reads `/etc/passwd` and scans every user home for these paths:
 
 | Browser | Standard | Snap | Flatpak |
 |---|---|---|---|
@@ -394,7 +448,18 @@ The collector scans **all home directories** from `/etc/passwd` and checks the f
 | Waterfox | `~/.waterfox/` | ❌ | `~/.var/app/net.waterfox.waterfox/.waterfox/` |
 | Tor | `~/.tor-browser/.../profile.default/` | ❌ | `~/.var/app/com.github.micahflee.torbrowser-launcher/.../profile.default/` |
 
-#### Step 5 — Manual ossec.conf Patch (if not auto-applied)
+#### Step 5 — Expected Log Format
+
+Once a browser is used on the machine, log lines appear like:
+
+```
+Apr 13 22:50:01 agent browser-monitor: 2026-04-13 22:50:01 Firefox agent 2h0c42a3.default https://github.com GitHub
+Apr 13 22:50:15 agent browser-monitor: 2026-04-13 22:50:15 Chrome agent Default https://google.com Google Search
+```
+
+Fields: `timestamp browser username profile url title`
+
+#### Step 6 — Manual ossec.conf Patch (if not auto-applied)
 
 ```bash
 sudo nano /var/ossec/etc/ossec.conf
@@ -414,7 +479,7 @@ Restart agent:
 sudo systemctl restart wazuh-agent
 ```
 
-#### Step 6 — Service Management
+#### Step 7 — Service Management
 
 ```bash
 # Start / Stop / Restart
@@ -446,11 +511,11 @@ rm -rf /root/.browser-monitor
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `Failed to connect to bus: No medium found` on `systemctl --user` | Service runs as SYSTEM, not user | Use `systemctl status browser-monitor` (no `--user`) |
-| Log only shows `service_started`, no visit lines | No browser profiles found under scanned paths | Run `find / -name 'places.sqlite' 2>/dev/null` to locate Firefox; `find / -name 'History' -path '*/chrome/*' 2>/dev/null` for Chrome |
-| `SyntaxWarning: invalid escape sequence` in journalctl | Old collector version cached on disk | Pull latest: `curl ... -o /root/.browser-monitor/browser-history-monitor.py` then `systemctl restart browser-monitor` |
-| `no_browser_profiles_found` in log | Collector found no browser DBs | Confirm browser is installed and has been launched at least once to create profile |
-| ossec.conf has duplicate `<localfile>` block | Installer ran twice | Remove duplicate manually with `nano /var/ossec/etc/ossec.conf` |
+| `Failed to connect to bus: No medium found` | `systemctl --user` used instead of SYSTEM | Use `systemctl status browser-monitor` (no `--user`) |
+| Log only shows `service_started`, no visits | No browser profiles found | Run the diagnostics in Step 3 above |
+| `SyntaxWarning: invalid escape sequence` | Old collector file on disk | Re-download: `curl -sSL .../browser-history-monitor.py -o /root/.browser-monitor/browser-history-monitor.py` |
+| `no_browser_profiles_found` in log | Browser never launched or path not covered | Open browser once; run `find / -name 'places.sqlite' 2>/dev/null` |
+| Duplicate `<localfile>` in ossec.conf | Installer ran twice | Remove duplicate block with `nano /var/ossec/etc/ossec.conf` |
 
 ---
 
@@ -486,7 +551,7 @@ macOS TCC protection blocks access to browser databases without this step:
    launchctl load  ~/Library/LaunchAgents/com.ramkumar.browser-monitor.plist
    ```
 
-#### Step 3 — Verify
+#### Step 3 — Verify Installation
 
 ```bash
 # Check LaunchAgent is loaded
@@ -498,6 +563,42 @@ tail -f ~/.browser-monitor/browser_history.log
 # Check Wazuh agent
 sudo /Library/Ossec/bin/wazuh-control status
 ```
+
+#### Step 4 — Verify Browser Profiles are Detected
+
+Run these to confirm the collector can find browser databases on your Mac:
+
+```bash
+# Find ALL Firefox places.sqlite files
+find / -name "places.sqlite" 2>/dev/null
+
+# Find ALL Firefox profile directories
+find / -name "*.default*" -path "*/firefox/*" -type d 2>/dev/null
+
+# Find ALL Chrome/Edge/Brave History SQLite files
+find ~/Library/Application\ Support -name "History" -path "*/Default/*" 2>/dev/null
+find ~/Library/Application\ Support -name "History" -path "*/Profile*/*" 2>/dev/null
+
+# Find Safari history database
+find ~/Library/Safari -name "History.db" 2>/dev/null
+
+# Check which user is running the browser
+ps aux | grep -iE 'firefox|chrome|brave|safari|edge|chromium|opera|vivaldi'
+
+# Check current macOS username
+whoami
+echo $HOME
+```
+
+**What to look for:**
+
+| Output | Meaning |
+|---|---|
+| `places.sqlite` paths appear | ✅ Firefox detected |
+| `History` paths appear | ✅ Chrome-family detected |
+| `History.db` under `~/Library/Safari` | ✅ Safari detected |
+| Nothing found | Browser never opened — launch it and browse once, then re-run |
+| `Permission denied` errors | Full Disk Access not yet granted — complete Step 2 |
 
 #### Uninstall
 
@@ -595,8 +696,8 @@ Expect rule `900103` (level 8 anonymizer) to fire.
 | Problem | Fix |
 |---|---|
 | `Failed to connect to bus` on `--user` (Linux) | Use `systemctl status browser-monitor` (SYSTEM service — no `--user` flag) |
-| Log only has `service_started`, no visits | No browser profiles found — run `find / -name 'places.sqlite' 2>/dev/null` to locate Firefox DB |
-| `SyntaxWarning: invalid escape sequence` | Old collector file — re-download: `curl -sSL .../browser-history-monitor.py -o /root/.browser-monitor/browser-history-monitor.py` |
+| Log only has `service_started`, no visits | Run browser profile diagnostics (Phase 2 Step 3 for your OS) |
+| `SyntaxWarning: invalid escape sequence` | Old collector file — re-download and restart service |
 | `no_browser_profiles_found` in log | Browser not installed or never launched — open browser once to create profile |
 | Duplicate `<localfile>` in ossec.conf | Installer ran twice — remove duplicate block manually |
 | No alerts in Dashboard | Run `wazuh-logtest` with a test line — check Phase 3 output for rule match |
