@@ -1,20 +1,19 @@
 <!--
-  Wazuh Browser History Decoder
-  Author  : Ram Kumar G (IT Fortress)
-  Version : 2.2 (fixed)
+  Wazuh Browser History Decoder v2.3
+  Author : Ram Kumar G (IT Fortress)
 
   FIXES:
-    v2.1 - Removed | alternation from <regex> (not supported by Wazuh)
-    v2.2 - Removed \[ \] escaping from <prematch> (not supported by Wazuh prematch)
-           Use literal [Extension] in prematch, \[ \] only valid inside <regex>
+    v2.1 - Removed | alternation (not supported)
+    v2.2 - Removed \[ from prematch (not supported)
+    v2.3 - Removed extension decoder entirely
+           Wazuh OSS regex engine does not support \[ \( escaping
+           Only \S \d \w \. work reliably
 -->
 
-<!-- Stage 1: prematch on the syslog tag -->
 <decoder name="browser-monitor-pre">
   <prematch>browser-monitor: </prematch>
 </decoder>
 
-<!-- Stage 2a: browser history visit -->
 <decoder name="browser-monitor-history">
   <parent>browser-monitor-pre</parent>
   <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d </prematch>
@@ -22,16 +21,6 @@
   <order>data.visit_time, data.browser, data.profile, data.url, data.title</order>
 </decoder>
 
-<!-- Stage 2b: browser extension install/update -->
-<!-- NOTE: prematch uses LITERAL [Extension] not \[Extension\] -->
-<decoder name="browser-monitor-extension">
-  <parent>browser-monitor-pre</parent>
-  <prematch>[Extension] </prematch>
-  <regex>\[Extension\] (\S+) (\S+) "(.+)" \((\S+)\) v(\S+)</regex>
-  <order>data.browser, data.profile, data.extension_name, data.extension_id, data.extension_version</order>
-</decoder>
-
-<!-- Stage 2c: service lifecycle events -->
 <decoder name="browser-monitor-service">
   <parent>browser-monitor-pre</parent>
   <prematch>service_started</prematch>
