@@ -25,15 +25,18 @@
 -->
 
 <!-- Visit lines: prematch on full raw log line, extracts all 5 fields -->
-<decoder name="browser-monitor-log">
-  <prematch>browser-monitor: \d\d\d\d-</prematch>
-  <regex>browser-monitor: (\S+ \S+) (\S+) (\S+) (\S+) (.+)</regex>
-  <order>mon_timestamp,mon_browser_name,mon_profile,mon_url,mon_title</order>
+<decoder name="browser-monitor-service">
+  <program_name>^browser-monitor$</program_name>
+  <prematch>^service_</prematch>
 </decoder>
 
-<!-- Service lifecycle lines -->
-<decoder name="browser-monitor-service">
-  <prematch>browser-monitor: service_</prematch>
-  <regex>browser-monitor: (service_\S+)</regex>
-  <order>mon_service_event</order>
+<decoder name="browser-monitor-log">
+  <program_name>^browser-monitor$</program_name>
+  <prematch>^\d+-\d+-\d+ \d+:\d+:\d+</prematch>
+</decoder>
+
+<decoder name="browser-monitor-log-fields">
+  <parent>browser-monitor-log</parent>
+  <regex type="pcre2">^(\d+-\d+-\d+ \d+:\d+:\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$</regex>
+  <order>mon_browse_time, mon_browser_name, mon_browser_profile, mon_url, mon_page_title</order>
 </decoder>
