@@ -39,7 +39,7 @@
 ┌──────────────────────────────────────────────────────┐
 │                   WAZUH MANAGER                      │
 │  ┌──────────────────────┐  ┌────────────────────────┐│
-│  │ Decoder               │─▶│ Rules (110100–110114)  ││
+│  │ Decoder               │─▶│ Rules (900100–900113)  ││
 │  │ 0310-browser_history  │  │ Alerts → Dashboard     ││
 │  └──────────────────────┘  └────────────────────────┘│
 └───────────────────────────────┬──────────────────────┘
@@ -119,13 +119,11 @@ sudo chmod 660 /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 ls -lah /var/ossec/etc/decoders/0310-browser_history_decoder.xml
 ```
 
-
-
 ---
 
 ### 1.2 — Deploy the Rules
 
-The rules define what gets alerted — 14 rules covering dangerous downloads, phishing pages, anonymizer tools, data exfiltration sites, dark web proxies, and more.
+The rules define what gets alerted — 13 rules covering dangerous downloads, phishing pages, anonymizer tools, data exfiltration sites, dark web proxies, and more.
 
 ```bash
 # Copy rules
@@ -141,21 +139,20 @@ ls -lah /var/ossec/etc/rules/0310-browser_history_rules.xml
 
 | Rule ID | Level | Category | Example Match |
 |---|---|---|---|
-| 110100 | 2 | Baseline visibility | Any browser visit |
-| 110101 | 10 | Dangerous download | `.exe` `.ps1` `.hta` `.msi` `.iso` in URL |
-| 110102 | 10 | Phishing / Credential | `login` `mfa` `verify` `otp` `password-reset` in URL |
-| 110103 | 8 | Anonymizer / TOR | `torproject.org`, `protonvpn`, `nordvpn` |
-| 110104 | 7 | Data exfiltration | `pastebin.com`, `mega.nz`, `wetransfer` |
-| 110105 | 6 | Cloud storage upload | `drive.google.com`, `onedrive`, `dropbox` |
-| 110106 | 4 | Non-HTTP scheme | `ftp://`, `file://`, `data:`, `blob:` |
-| 110107 | 3 | Insecure HTTP | URL starts with `http://` (not https) |
-| 110108 | 5 | Crypto / Trading | `binance.com`, `coinbase.com`, `kraken.com` |
-| 110109 | 3 | Social Media | `facebook`, `twitter`, `tiktok`, `instagram` |
-| 110110 | 9 | Exploit / Hacking tool | `exploit-db.com`, `shodan.io`, `hackforums` |
-| 110111 | 9 | Dark web / .onion proxy | `.onion`, `dark.fail`, `ahmia.fi` |
-| 110112 | 8 | Malware keyword in domain | `malware`, `ransomware`, `botnet` in domain |
-| 110113 | 3 | Extension install/update | `chrome.google.com/webstore`, `addons.mozilla` |
-| 110114 | 1 | Monitor service started | Collector startup message |
+| 900100 | 2 | Baseline visibility | Any browser visit |
+| 900101 | 10 | Dangerous download | `.exe` `.ps1` `.hta` `.msi` `.iso` in URL |
+| 900102 | 10 | Phishing / Credential | `login` `mfa` `verify` `otp` `password-reset` in URL |
+| 900103 | 8 | Anonymizer / TOR | `torproject.org`, `protonvpn`, `nordvpn` |
+| 900104 | 7 | Data exfiltration | `pastebin.com`, `mega.nz`, `wetransfer` |
+| 900105 | 6 | Cloud storage upload | `drive.google.com`, `onedrive`, `dropbox` |
+| 900106 | 4 | Non-HTTP scheme | `ftp://`, `file://`, `data:`, `blob:` |
+| 900107 | 3 | Insecure HTTP | URL starts with `http://` (not https) |
+| 900108 | 5 | Crypto / Trading | `binance.com`, `coinbase.com`, `kraken.com` |
+| 900109 | 3 | Social Media | `facebook`, `twitter`, `tiktok`, `instagram` |
+| 900110 | 9 | Exploit / Hacking tool | `exploit-db.com`, `shodan.io`, `hackforums` |
+| 900111 | 9 | Dark web / .onion proxy | `.onion`, `dark.fail`, `ahmia.fi` |
+| 900112 | 8 | Malware keyword in domain | `malware`, `ransomware`, `botnet` in domain |
+| 900113 | 1 | Monitor service started | Collector startup message |
 
 ---
 
@@ -237,9 +234,9 @@ Apr 13 06:27:55 WIN-ENDPOINT browser-monitor: 2026-04-13 06:27:55 Chrome Default
 **Expected Phase 3 result:**
 ```
 ** Alert to be generated.
-Rule id: '110104'
+Rule id: '900104'
 Level: '7'
-Description: 'Browser: Data-Sharing/Paste Site Visit'
+Description: 'Browser Data-Sharing Site: Paste/upload site visited via Chrome'
 ```
 
 ✅ **Phase 1 complete — Manager is ready. All enrolled agents will now have active detection.**
@@ -437,11 +434,11 @@ Open a browser on a monitored endpoint and visit:
 
 | URL | Expected Rule | Level |
 |---|---|---|
-| `http://example.com` | 110107 — Insecure HTTP | 3 |
-| `https://pastebin.com/test` | 110104 — Data Exfil | 7 |
-| `https://mega.nz` | 110104 — Data Exfil | 7 |
-| `https://torproject.org` | 110103 — Anonymizer | 8 |
-| `https://exploit-db.com` | 110110 — Exploit site | 9 |
+| `http://example.com` | 900107 — Insecure HTTP | 3 |
+| `https://pastebin.com/test` | 900104 — Data Exfil | 7 |
+| `https://mega.nz` | 900104 — Data Exfil | 7 |
+| `https://torproject.org` | 900103 — Anonymizer | 8 |
+| `https://exploit-db.com` | 900110 — Exploit site | 9 |
 
 ---
 
@@ -449,21 +446,20 @@ Open a browser on a monitored endpoint and visit:
 
 | Rule ID | Level | Alert | MITRE |
 |---|---|---|---|
-| 110100 | 2 | Browser visit (baseline visibility) | — |
-| 110101 | 10 | Dangerous file download (.exe .ps1 .hta .msi .iso) | T1204.002 |
-| 110102 | 10 | Credential/phishing page (login, mfa, verify, otp) | T1566.002 |
-| 110103 | 8 | Anonymizer / TOR access | T1090 |
-| 110104 | 7 | Paste/file-sharing site (Pastebin, Mega, WeTransfer) | T1567 |
-| 110105 | 6 | Cloud storage (Drive, OneDrive, Dropbox, Box) | T1567.002 |
-| 110106 | 4 | Non-HTTP scheme (ftp, file, data, blob) | — |
-| 110107 | 3 | Insecure HTTP visit | — |
-| 110108 | 5 | Crypto/trading site (Binance, Coinbase, Kraken) | — |
-| 110109 | 3 | Social media (Facebook, Twitter, TikTok, Instagram) | — |
-| 110110 | 9 | Exploit/hacking tool site (exploit-db, Shodan) | T1588.005 |
-| 110111 | 9 | Dark web / .onion proxy access | T1090.003 |
-| 110112 | 8 | Malware keyword in domain | T1566 |
-| 110113 | 3 | Browser extension installed/updated | — |
-| 110114 | 1 | Monitor service started | — |
+| 900100 | 2 | Browser visit (baseline visibility) | — |
+| 900101 | 10 | Dangerous file download (.exe .ps1 .hta .msi .iso) | T1204.002 |
+| 900102 | 10 | Credential/phishing page (login, mfa, verify, otp) | T1566.002 |
+| 900103 | 8 | Anonymizer / TOR access | T1090 |
+| 900104 | 7 | Paste/file-sharing site (Pastebin, Mega, WeTransfer) | T1567 |
+| 900105 | 6 | Cloud storage (Drive, OneDrive, Dropbox, Box) | T1567.002 |
+| 900106 | 4 | Non-HTTP scheme (ftp, file, data, blob) | — |
+| 900107 | 3 | Insecure HTTP visit | — |
+| 900108 | 5 | Crypto/trading site (Binance, Coinbase, Kraken) | — |
+| 900109 | 3 | Social media (Facebook, Twitter, TikTok, Instagram) | — |
+| 900110 | 9 | Exploit/hacking tool site (exploit-db, Shodan) | T1588.005 |
+| 900111 | 9 | Dark web / .onion proxy access | T1090.003 |
+| 900112 | 8 | Malware keyword in domain | T1566 |
+| 900113 | 1 | Monitor service started | — |
 
 ---
 
@@ -480,6 +476,7 @@ Open a browser on a monitored endpoint and visit:
 | Agent not forwarding | Check `ossec.conf` has the correct `<localfile>` block pointing to the log file |
 | Python not found (Windows) | Reinstall Python: check "Install for All Users" + "Add to PATH" |
 | ossec.conf not updated | Add `<localfile>` block manually — see Phase 2 manual patch section |
+| Rule ID conflict | Remove old 110100–110114 blocks from `local_rules.xml` if they exist |
 
 ---
 
@@ -499,9 +496,9 @@ wazuh-browser-history-monitoring/
 │   └── macos-installer.sh                      ← macOS installer (LaunchAgent)
 └── wazuh/
     ├── decoders/
-    │   └── 0310-browser_history_decoder.xml    ← Wazuh decoder
+    │   └── 0310-browser_history_decoder.xml    ← Wazuh decoder (v2.3)
     └── rules/
-        └── 0310-browser_history_rules.xml      ← 14 detection rules (MITRE mapped)
+        └── 0310-browser_history_rules.xml      ← 13 detection rules (MITRE mapped, IDs 900100–900113)
 ```
 
 ---
