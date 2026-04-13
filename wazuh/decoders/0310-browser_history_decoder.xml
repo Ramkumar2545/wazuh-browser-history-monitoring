@@ -1,56 +1,39 @@
 <!--
-  Wazuh Browser History Decoder v2.5
+  Wazuh Browser History Decoder v2.6
   Author : Ram Kumar G (IT Fortress)
 
-  CHANGELOG:
-    v2.4 - Fixed parent: use <program_name> instead of <prematch>
-           Result: parent now matches (browser-monitor-pre fires)
-    v2.5 - Fixed child: browser-monitor-history was not firing
-           Root cause: wazuh-logtest was fed markdown-wrapped URLs
-             [http://url](http://url) instead of plain http://url
-           The actual log file on disk has plain URLs — child regex is correct.
-           Additional safety: relaxed URL capture group from \S+ to .+?
-           so it tolerates edge cases.
+  APPROACH CHANGE (v2.6):
+    Switched from parent/child chain to a single flat decoder.
+    The <prematch> works on the FULL raw log line (before any stripping)
+    so "browser-monitor: " is visible and matchable.
 
-           Also: child decoder prematch must match against the
-           LOG BODY only (after program_name prefix is stripped).
-           Body format: "2026-04-13 01:01:16 Edge Default https://url Title"
+    This is simpler, more reliable, and avoids child-not-firing issues.
 
-  DECODER CHAIN:
-    browser-monitor-pre          <- program_name = browser-monitor
-      browser-monitor-history    <- timestamped visit lines
-      browser-monitor-service    <- service_started lines
+  BUG FIX:
+    Previous approach used (\.+) for title which only matched literal dots.
+    Fixed to (.+) which matches any character = full page title captured.
+
+  Raw log format:
+    Apr 13 01:01:16 WIN-PC browser-monitor: 2026-04-13 01:01:16 Edge Default https://url Title
+
+  Extracted fields:
+    mon_timestamp    = 2026-04-13 01:01:16
+    mon_browser_name = Edge
+    mon_profile      = Default
+    mon_url          = https://discord.com/
+    mon_title        = Discord - Group Chat
 -->
 
-<!-- Parent: anchored to program_name extracted by syslog pre-decoder -->
-<decoder name="browser-monitor-pre">
-  <program_name>^browser-monitor$</program_name>
+<!-- Visit lines: prematch on full raw log line, extracts all 5 fields -->
+<decoder name="browser-monitor-log">
+  <prematch>browser-monitor: \d\d\d\d-</prematch>
+  <regex>browser-monitor: (\S+ \S+) (\S+) (\S+) (\S+) (.+)</regex>
+  <order>mon_timestamp,mon_browser_name,mon_profile,mon_url,mon_title</order>
 </decoder>
 
-<!--
-  Child: browser visit lines
-
-  Groups:
-    1 = visit_time  (YYYY-MM-DD HH:MM:SS)
-    2 = browser     (Chrome / Edge / Firefox / Brave)
-    3 = profile     (Default / Profile 1 / etc)
-    4 = url         (https://... or http://...)
-    5 = title       (rest of line)
--->
-<decoder name="browser-monitor-history">
-  <parent>browser-monitor-pre</parent>
-  <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d \S+ \S+ \S</prematch>
-  <regex>(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d) (\S+) (\S+) (\S+) (.*)</regex>
-  <order>data.visit_time, data.browser, data.profile, data.url, data.title</order>
-</decoder>
-
-<!--
-  Child: service lifecycle
-  Log body: "service_started"
--->
+<!-- Service lifecycle lines -->
 <decoder name="browser-monitor-service">
-  <parent>browser-monitor-pre</parent>
-  <prematch>service_started</prematch>
-  <regex>(service_\S+)</regex>
-  <order>data.service_event</order>
+  <prematch>browser-monitor: service_</prematch>
+  <regex>browser-monitor: (service_\S+)</regex>
+  <order>mon_service_event</order>
 </decoder>
