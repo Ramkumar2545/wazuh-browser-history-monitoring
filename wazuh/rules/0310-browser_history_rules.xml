@@ -1,0 +1,160 @@
+<!-- 
+  Wazuh Browser History Rules
+  Author  : Ram Kumar G (IT Fortress)
+  Version : 2.0
+  Rule IDs: 110100 – 110114
+
+  MITRE ATT&CK Mapped:
+    T1204.002 - User Execution: Malicious File
+    T1566.002 - Phishing: Spearphishing Link  
+    T1090     - Proxy
+    T1090.003 - Proxy: Multi-hop Proxy
+    T1567     - Exfiltration Over Web Service
+    T1567.002 - Exfiltration Over Web Service: Exfiltration to Cloud Storage
+    T1588.005 - Obtain Capabilities: Exploits
+-->
+
+<group name="browser_history,">
+
+  <!-- 110100: Baseline — every browser visit logged (low level, visibility) -->
+  <rule id="110100" level="2">
+    <decoded_as>browser-monitor-history</decoded_as>
+    <description>Browser History: $(data.browser) visit by $(agent.name) — $(data.url)</description>
+    <group>browser_history,pci_dss_10.6.1,gpg13_10.1,gdpr_IV_35.7.d,</group>
+  </rule>
+
+  <!-- 110101: Dangerous file download -->
+  <rule id="110101" level="10">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*\.(exe|msi|ps1|bat|cmd|hta|vbs|js|jar|iso|img|dll|scr|pif|com)(\?|$|#|\s)</regex>
+    <description>Browser Download Risk: Potentially dangerous file extension accessed via $(data.browser)</description>
+    <mitre>
+      <id>T1204.002</id>
+    </mitre>
+    <group>browser_history,download_risk,</group>
+  </rule>
+
+  <!-- 110102: Credential/phishing page visit -->
+  <rule id="110102" level="10">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(login|signin|sign-in|verify|mfa|otp|2fa|auth|reset-password|account-recovery|credential|password-reset)(.*)</regex>
+    <description>Browser Credential Page: Possible phishing or auth page visited via $(data.browser)</description>
+    <mitre>
+      <id>T1566.002</id>
+    </mitre>
+    <group>browser_history,phishing_risk,</group>
+  </rule>
+
+  <!-- 110103: Anonymizer / TOR -->
+  <rule id="110103" level="8">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(torproject\.org|tor2web|torsocks|proxysite|hidemyass|anonymouse|proxfree|kproxy|hide\.me|whoer\.net|vpnbook)(.*)</regex>
+    <description>Browser Anonymizer: TOR/proxy access detected via $(data.browser)</description>
+    <mitre>
+      <id>T1090</id>
+    </mitre>
+    <group>browser_history,anonymizer,</group>
+  </rule>
+
+  <!-- 110104: Data-sharing / paste site -->
+  <rule id="110104" level="7">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(pastebin\.com|paste\.ee|ghostbin|hastebin|termbin|dpaste|rentry\.co|privatebin|mega\.nz|gofile\.io|anonfiles|bayfiles|wetransfer\.com|send\.firefox\.com)(.*)</regex>
+    <description>Browser Data-Sharing Site: Paste/upload site visited via $(data.browser)</description>
+    <mitre>
+      <id>T1567</id>
+    </mitre>
+    <group>browser_history,data_exfil_risk,</group>
+  </rule>
+
+  <!-- 110105: Cloud storage -->
+  <rule id="110105" level="6">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(drive\.google\.com|docs\.google\.com/spreadsheets|onedrive\.live\.com|dropbox\.com|box\.com|sync\.com|pcloud\.com|icloud\.com/drive)(.*)</regex>
+    <description>Browser Cloud Storage: File sharing site visited via $(data.browser)</description>
+    <mitre>
+      <id>T1567.002</id>
+    </mitre>
+    <group>browser_history,cloud_upload,</group>
+  </rule>
+
+  <!-- 110106: Non-HTTP scheme -->
+  <rule id="110106" level="4">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(^ftp://|^file://|^data:|^blob:|^javascript:)(.*)</regex>
+    <description>Browser Non-HTTP Scheme: Unusual URL scheme detected via $(data.browser)</description>
+    <group>browser_history,unusual_scheme,</group>
+  </rule>
+
+  <!-- 110107: Insecure HTTP -->
+  <rule id="110107" level="3">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*http://(?!localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)(.*)</regex>
+    <description>Browser Insecure HTTP: Non-HTTPS site visited via $(data.browser)</description>
+    <group>browser_history,insecure_http,</group>
+  </rule>
+
+  <!-- 110108: Crypto / trading -->
+  <rule id="110108" level="5">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(binance\.com|coinbase\.com|kraken\.com|kucoin\.com|bybit\.com|crypto\.com|blockchain\.com|metamask\.io|uniswap\.org|opensea\.io)(.*)</regex>
+    <description>Browser Crypto Site: Cryptocurrency/trading platform visited via $(data.browser)</description>
+    <group>browser_history,crypto,</group>
+  </rule>
+
+  <!-- 110109: Social media -->
+  <rule id="110109" level="3">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com|snapchat\.com|reddit\.com|linkedin\.com|discord\.com|telegram\.org)(.*)</regex>
+    <description>Browser Social Media: Social platform visited via $(data.browser)</description>
+    <group>browser_history,social_media,</group>
+  </rule>
+
+  <!-- 110110: Exploit/hacking tools -->
+  <rule id="110110" level="9">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(exploit-db\.com|shodan\.io|zoomeye\.org|fofa\.info|censys\.io|hunter\.io|haveibeenpwned|darkweb|hacking-tools|crackstation|nulled\.to)(.*)</regex>
+    <description>Browser Exploit Site: Security research/exploit site visited via $(data.browser)</description>
+    <mitre>
+      <id>T1588.005</id>
+    </mitre>
+    <group>browser_history,exploit_site,</group>
+  </rule>
+
+  <!-- 110111: Dark web proxy -->
+  <rule id="110111" level="9">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*((\.onion)|(darkweb)|(dark-web)|(onion\.to)|(onion\.ws)|(onion\.ly))(.*)</regex>
+    <description>Browser Dark Web: Dark web / .onion proxy access via $(data.browser)</description>
+    <mitre>
+      <id>T1090.003</id>
+    </mitre>
+    <group>browser_history,dark_web,</group>
+  </rule>
+
+  <!-- 110112: Malware keyword in domain -->
+  <rule id="110112" level="8">
+    <if_sid>110100</if_sid>
+    <regex type="pcre2">data\.url.*(malware|ransomware|trojan|keylogger|spyware|botnet|c2server|cnc-server|payload-delivery|dropper)(.*)</regex>
+    <description>Browser Malware Keyword: Suspicious keyword in URL via $(data.browser)</description>
+    <mitre>
+      <id>T1566</id>
+    </mitre>
+    <group>browser_history,malware_keyword,</group>
+  </rule>
+
+  <!-- 110113: Extension event -->
+  <rule id="110113" level="3">
+    <decoded_as>browser-monitor-extension</decoded_as>
+    <description>Browser Extension: $(data.extension_name) ($(data.extension_id)) v$(data.extension_version) detected in $(data.browser)</description>
+    <group>browser_history,extension_event,</group>
+  </rule>
+
+  <!-- 110114: Service lifecycle -->
+  <rule id="110114" level="1">
+    <decoded_as>browser-monitor-service</decoded_as>
+    <description>Browser Monitor: Service event — $(data.service_event) on $(agent.name)</description>
+    <group>browser_history,service_lifecycle,</group>
+  </rule>
+
+</group>

@@ -1,0 +1,38 @@
+<!-- 
+  Wazuh Browser History Decoder
+  Author  : Ram Kumar G (IT Fortress)
+  Version : 2.0
+
+  Decodes syslog lines written by browser-history-monitor.py
+
+  Log format (syslog):
+    Apr 13 11:00:01 HOSTNAME browser-monitor: YYYY-MM-DD HH:MM:SS BROWSER PROFILE URL TITLE
+    Apr 13 11:00:01 HOSTNAME browser-monitor: 2026-04-13 11:00:01 Chrome Default https://google.com Google
+    Apr 13 11:00:01 HOSTNAME browser-monitor: [Extension] Chrome Default "uBlock Origin" (xxx) v1.58.0
+    Apr 13 11:00:01 HOSTNAME browser-monitor: service_started
+-->
+
+<decoder name="browser-monitor-pre">
+  <prematch>browser-monitor: </prematch>
+</decoder>
+
+<decoder name="browser-monitor-history">
+  <parent>browser-monitor-pre</parent>
+  <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d </prematch>
+  <regex>(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d) (\S+) (\S+) (https?://\S+|ftp://\S+|file://\S+|\S+:/\S+) (.*)</regex>
+  <order>data.visit_time, data.browser, data.profile, data.url, data.title</order>
+</decoder>
+
+<decoder name="browser-monitor-extension">
+  <parent>browser-monitor-pre</parent>
+  <prematch>\[Extension\] </prematch>
+  <regex>\[Extension\] (\S+) (\S+) "(.+)" \((\S+)\) v(\S+)</regex>
+  <order>data.browser, data.profile, data.extension_name, data.extension_id, data.extension_version</order>
+</decoder>
+
+<decoder name="browser-monitor-service">
+  <parent>browser-monitor-pre</parent>
+  <prematch>service_started|service_stopped</prematch>
+  <regex>(service_\S+)</regex>
+  <order>data.service_event</order>
+</decoder>
