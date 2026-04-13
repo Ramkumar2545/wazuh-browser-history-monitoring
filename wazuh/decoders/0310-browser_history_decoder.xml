@@ -1,23 +1,12 @@
 <!--
   Wazuh Browser History Decoder
   Author  : Ram Kumar G (IT Fortress)
-  Version : 2.1 (fixed)
+  Version : 2.2 (fixed)
 
-  FIX v2.1:
-    Removed | alternation from <regex> - Wazuh analysisd does NOT support alternation (|)
-    in decoder <regex> blocks. Using simple \S+ to capture any URL scheme.
-
-  Log format emitted by browser-history-monitor.py:
-    Apr 13 11:00:01 HOSTNAME browser-monitor: 2026-04-13 11:00:01 Chrome Default https://google.com Google
-    Apr 13 11:00:01 HOSTNAME browser-monitor: [Extension] Chrome Default "uBlock Origin" (xxx) v1.58.0
-    Apr 13 11:00:01 HOSTNAME browser-monitor: service_started
-
-  Fields decoded:
-    data.visit_time     - 2026-04-13 11:00:01
-    data.browser        - Chrome / Edge / Firefox / Brave / Opera / Safari
-    data.profile        - Default / Profile 1 / etc
-    data.url            - Full URL visited
-    data.title          - Page title
+  FIXES:
+    v2.1 - Removed | alternation from <regex> (not supported by Wazuh)
+    v2.2 - Removed \[ \] escaping from <prematch> (not supported by Wazuh prematch)
+           Use literal [Extension] in prematch, \[ \] only valid inside <regex>
 -->
 
 <!-- Stage 1: prematch on the syslog tag -->
@@ -26,11 +15,6 @@
 </decoder>
 
 <!-- Stage 2a: browser history visit -->
-<!--
-  IMPORTANT: No | alternation allowed in Wazuh decoder regex.
-  \S+ captures any URL scheme (https, http, ftp, file, blob, data, chrome-extension, etc)
-  (.+) at end captures page title which may contain spaces
--->
 <decoder name="browser-monitor-history">
   <parent>browser-monitor-pre</parent>
   <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d </prematch>
@@ -39,9 +23,10 @@
 </decoder>
 
 <!-- Stage 2b: browser extension install/update -->
+<!-- NOTE: prematch uses LITERAL [Extension] not \[Extension\] -->
 <decoder name="browser-monitor-extension">
   <parent>browser-monitor-pre</parent>
-  <prematch>\[Extension\] </prematch>
+  <prematch>[Extension] </prematch>
   <regex>\[Extension\] (\S+) (\S+) "(.+)" \((\S+)\) v(\S+)</regex>
   <order>data.browser, data.profile, data.extension_name, data.extension_id, data.extension_version</order>
 </decoder>
