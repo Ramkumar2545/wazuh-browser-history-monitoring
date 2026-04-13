@@ -267,7 +267,7 @@
        ⚠️  MUST be the LAST child rule.
        ⚠️  level="2" (low noise, just visibility)
        ═══════════════════════════════════════════════ -->
-  <rule id="900122" level="2">
+  <rule id="900122" level="7">
     <if_sid>900100</if_sid>
     <regex type="pcre2">https?://\S+</regex>
     <description>Browser General Visit: $(mon_browser_name) - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
