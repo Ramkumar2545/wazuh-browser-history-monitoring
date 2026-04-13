@@ -29,8 +29,7 @@
 
 <!--
   Child: browser visit lines
-  Log body after syslog strip:
-    "2026-04-13 01:01:16 Edge Default https://github.com/ GitHub Title"
+
   Groups:
     1 = visit_time  (YYYY-MM-DD HH:MM:SS)
     2 = browser     (Chrome / Edge / Firefox / Brave)
