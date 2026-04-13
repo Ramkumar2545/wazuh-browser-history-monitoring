@@ -2,9 +2,11 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.2
+Version : 2.3
 Platform: Windows | Linux | macOS
-Browsers: Chrome, Edge, Brave, Firefox (incl. Snap/Flatpak), Opera, Opera GX, Safari (macOS)
+Browsers: Chrome, Edge, Brave, Firefox, Opera, OperaGX, Vivaldi,
+          Waterfox, Tor, Chromium, Safari (macOS)
+          All install types: standard, snap, flatpak
 
 Reads browser SQLite history databases every 60 seconds.
 Writes syslog-format lines to browser_history.log.
@@ -15,7 +17,6 @@ VT-clean: no Invoke-WebRequest, no exe patterns, no url fetch.
 """
 
 import os
-import sys
 import time
 import sqlite3
 import shutil
@@ -28,12 +29,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 # --- CONFIGURATION ------------------------------------------------------------
-SCAN_INTERVAL = 60          # seconds between scans
+SCAN_INTERVAL = 60
 LOG_FILE_NAME = "browser_history.log"
 
 # --- CONSTANTS ----------------------------------------------------------------
-CHROME_EPOCH_DIFF = 11644473600   # Chrome timestamps: microseconds since 1601-01-01
-MAC_EPOCH_DIFF    = 978307200     # Safari timestamps: seconds since 2001-01-01
+CHROME_EPOCH_DIFF = 11644473600
+MAC_EPOCH_DIFF    = 978307200
 
 # --- HELPERS ------------------------------------------------------------------
 def chrome_time(ts):
@@ -70,7 +71,7 @@ def safari_time(ts):
 # --- MAIN CLASS ---------------------------------------------------------------
 class BrowserMonitor:
     def __init__(self):
-        self.os_type     = platform.system()   # 'Windows', 'Linux', 'Darwin'
+        self.os_type     = platform.system()
         self.hostname    = socket.gethostname()
         self.user_home   = Path.home()
         self.install_dir = self._get_install_dir()
@@ -81,8 +82,8 @@ class BrowserMonitor:
 
     # -- paths -----------------------------------------------------------------
     def _get_install_dir(self):
-        # Windows -> C:\BrowserMonitor  (shared, Wazuh agent watches it)
-        # Linux   -> /root/.browser-monitor  (Wazuh agent runs as root)
+        # Windows -> C:\BrowserMonitor
+        # Linux   -> /root/.browser-monitor (agent runs as root, log watched by Wazuh)
         # macOS   -> ~/.browser-monitor
         if self.os_type == "Windows":
             path = Path("C:/BrowserMonitor")
@@ -91,7 +92,7 @@ class BrowserMonitor:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
-    # -- state persistence -----------------------------------------------------
+    # -- state -----------------------------------------------------------------
     def _load_state(self):
         if self.state_path.exists():
             try:
@@ -111,8 +112,6 @@ class BrowserMonitor:
 
     # -- logging ---------------------------------------------------------------
     def _setup_logging(self):
-        # Syslog-style: 'MMM DD HH:MM:SS hostname browser-monitor: message'
-        # This is what the Wazuh decoder expects.
         self.logger = logging.getLogger("BrowserMonitor")
         self.logger.setLevel(logging.INFO)
         if self.logger.handlers:
@@ -126,17 +125,10 @@ class BrowserMonitor:
         self.logger.addHandler(fh)
         self.logger.info("service_started")
 
-    # -- user home discovery (Linux: scan all users) ---------------------------
+    # -- all user home dirs (Linux) --------------------------------------------
     def _get_all_home_dirs(self):
-        """
-        On Linux, running as root means Path.home() = /root.
-        We need to scan ALL user home directories to find browsers.
-        Returns list of Path objects for each home dir that exists.
-        """
         homes = set()
-        # Always include /root itself
         homes.add(Path("/root"))
-        # Parse /etc/passwd for all users with a real home
         try:
             with open("/etc/passwd", "r") as f:
                 for line in f:
@@ -149,64 +141,101 @@ class BrowserMonitor:
             pass
         return list(homes)
 
-    # -- browser profile discovery ---------------------------------------------
+    # -- browser root paths ----------------------------------------------------
     def _get_browser_roots(self):
-        """Returns list of (browser_name, username, root_path) for all supported browsers."""
+        """Return list of (browser_name, username, root_path) tuples."""
         roots = []
+
         if self.os_type == "Windows":
             lad = os.environ.get('LOCALAPPDATA', '')
             apd = os.environ.get('APPDATA', '')
+            usr = os.environ.get('USERNAME', 'Default')
             if lad:
                 roots += [
-                    ("Chrome",  "Default", Path(lad) / "Google" / "Chrome" / "User Data"),
-                    ("Edge",    "Default", Path(lad) / "Microsoft" / "Edge" / "User Data"),
-                    ("Brave",   "Default", Path(lad) / "BraveSoftware" / "Brave-Browser" / "User Data"),
+                    ("Chrome",   usr, Path(lad) / "Google" / "Chrome" / "User Data"),
+                    ("Edge",     usr, Path(lad) / "Microsoft" / "Edge" / "User Data"),
+                    ("Brave",    usr, Path(lad) / "BraveSoftware" / "Brave-Browser" / "User Data"),
+                    ("Vivaldi",  usr, Path(lad) / "Vivaldi" / "User Data"),
+                    ("Chromium", usr, Path(lad) / "Chromium" / "User Data"),
                 ]
             if apd:
                 roots += [
-                    ("Opera",   "Default", Path(apd) / "Opera Software" / "Opera Stable"),
-                    ("OperaGX", "Default", Path(apd) / "Opera Software" / "Opera GX Stable"),
-                    ("Firefox", "Default", Path(apd) / "Mozilla" / "Firefox" / "Profiles"),
+                    ("Opera",    usr, Path(apd) / "Opera Software" / "Opera Stable"),
+                    ("OperaGX",  usr, Path(apd) / "Opera Software" / "Opera GX Stable"),
+                    ("Firefox",  usr, Path(apd) / "Mozilla" / "Firefox" / "Profiles"),
+                    ("Waterfox", usr, Path(apd) / "Waterfox" / "Profiles"),
+                    ("Tor",      usr, Path(apd) / "tor project" / "Tor Browser" / "Browser" / "TorBrowser" / "Data" / "Browser" / "profile.default"),
                 ]
 
         elif self.os_type == "Darwin":
             lib = self.user_home / "Library" / "Application Support"
+            usr = self.user_home.name
             roots += [
-                ("Chrome",  "Default", lib / "Google" / "Chrome"),
-                ("Edge",    "Default", lib / "Microsoft Edge"),
-                ("Brave",   "Default", lib / "BraveSoftware" / "Brave-Browser"),
-                ("Firefox", "Default", lib / "Firefox" / "Profiles"),
-                ("Opera",   "Default", lib / "com.operasoftware.Opera"),
-                ("Safari",  "Default", self.user_home / "Library" / "Safari"),
+                ("Chrome",   usr, lib / "Google" / "Chrome"),
+                ("Edge",     usr, lib / "Microsoft Edge"),
+                ("Brave",    usr, lib / "BraveSoftware" / "Brave-Browser"),
+                ("Vivaldi",  usr, lib / "Vivaldi"),
+                ("Opera",    usr, lib / "com.operasoftware.Opera"),
+                ("OperaGX",  usr, lib / "com.operasoftware.OperaGX"),
+                ("Firefox",  usr, lib / "Firefox" / "Profiles"),
+                ("Waterfox", usr, lib / "Waterfox" / "Profiles"),
+                ("Chromium", usr, lib / "Chromium"),
+                ("Safari",   usr, self.user_home / "Library" / "Safari"),
             ]
 
         elif self.os_type == "Linux":
             for home in self._get_all_home_dirs():
-                username = home.name
+                u   = home.name
                 cfg = home / ".config"
-                # Standard paths
+                moz = home / ".mozilla"
+                snap = home / "snap"
+                flat = home / ".var" / "app"
+
                 roots += [
-                    ("Chrome",   username, cfg / "google-chrome"),
-                    ("Edge",     username, cfg / "microsoft-edge"),
-                    ("Brave",    username, cfg / "BraveSoftware" / "Brave-Browser"),
-                    ("Chromium", username, cfg / "chromium"),
-                    ("Opera",    username, cfg / "opera"),
-                    ("Firefox",  username, home / ".mozilla" / "firefox"),
-                    # Snap Firefox
-                    ("Firefox",  username, home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"),
-                    # Flatpak Firefox
-                    ("Firefox",  username, home / ".var" / "app" / "org.mozilla.firefox" / ".mozilla" / "firefox"),
-                    # Snap Chromium
-                    ("Chromium", username, home / "snap" / "chromium" / "current" / ".config" / "chromium"),
-                    # Snap Chrome
-                    ("Chrome",   username, home / "snap" / "google-chrome" / "current" / ".config" / "google-chrome"),
+                    # ── Standard installs ──────────────────────────────────
+                    ("Chrome",   u, cfg / "google-chrome"),
+                    ("Chrome",   u, cfg / "google-chrome-beta"),
+                    ("Chrome",   u, cfg / "google-chrome-unstable"),
+                    ("Chromium", u, cfg / "chromium"),
+                    ("Edge",     u, cfg / "microsoft-edge"),
+                    ("Edge",     u, cfg / "microsoft-edge-beta"),
+                    ("Edge",     u, cfg / "microsoft-edge-dev"),
+                    ("Brave",    u, cfg / "BraveSoftware" / "Brave-Browser"),
+                    ("Brave",    u, cfg / "BraveSoftware" / "Brave-Browser-Beta"),
+                    ("Brave",    u, cfg / "BraveSoftware" / "Brave-Browser-Nightly"),
+                    ("Vivaldi",  u, cfg / "vivaldi"),
+                    ("Opera",    u, cfg / "opera"),
+                    ("OperaGX",  u, cfg / "opera-gx-stable"),
+                    ("Firefox",  u, moz / "firefox"),
+                    ("Waterfox", u, home / ".waterfox"),
+                    ("Tor",      u, home / ".tor-browser" / "app" / "Browser" / "TorBrowser" / "Data" / "Browser" / "profile.default"),
+
+                    # ── Snap installs ──────────────────────────────────────
+                    ("Firefox",  u, snap / "firefox" / "common" / ".mozilla" / "firefox"),
+                    ("Chromium", u, snap / "chromium" / "current" / ".config" / "chromium"),
+                    ("Chrome",   u, snap / "google-chrome" / "current" / ".config" / "google-chrome"),
+                    ("Edge",     u, snap / "microsoft-edge" / "current" / ".config" / "microsoft-edge"),
+                    ("Brave",    u, snap / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser"),
+                    ("Opera",    u, snap / "opera" / "current" / ".config" / "opera"),
+                    ("Vivaldi",  u, snap / "vivaldi" / "current" / ".config" / "vivaldi"),
+
+                    # ── Flatpak installs ───────────────────────────────────
+                    ("Firefox",  u, flat / "org.mozilla.firefox" / ".mozilla" / "firefox"),
+                    ("Waterfox", u, flat / "net.waterfox.waterfox" / ".waterfox"),
+                    ("Chrome",   u, flat / "com.google.Chrome" / ".config" / "google-chrome"),
+                    ("Chromium", u, flat / "org.chromium.Chromium" / ".config" / "chromium"),
+                    ("Edge",     u, flat / "com.microsoft.Edge" / ".config" / "microsoft-edge"),
+                    ("Brave",    u, flat / "com.brave.Browser" / ".config" / "BraveSoftware" / "Brave-Browser"),
+                    ("Opera",    u, flat / "com.opera.Opera" / ".config" / "opera"),
+                    ("Vivaldi",  u, flat / "com.vivaldi.Vivaldi" / ".config" / "vivaldi"),
+                    ("Tor",      u, flat / "com.github.micahflee.torbrowser-launcher" / ".tor-browser" / "app" / "Browser" / "TorBrowser" / "Data" / "Browser" / "profile.default"),
                 ]
         return roots
 
+    # -- profile enumeration ---------------------------------------------------
     def _find_profiles(self):
-        """Walk each browser root and enumerate all profiles."""
         profiles = []
-        seen_dbs = set()   # avoid duplicate DB paths
+        seen_dbs = set()
 
         for name, username, root in self._get_browser_roots():
             if not root.exists():
@@ -220,20 +249,29 @@ class BrowserMonitor:
                                      "username": username, "db": db, "kind": "safari"})
                 continue
 
-            if name == "Firefox":
+            # Firefox-family (places.sqlite)
+            if name in ("Firefox", "Waterfox", "Tor"):
+                # Tor profile.default is a direct profile dir, not a profiles root
+                if name == "Tor" and (root / "places.sqlite").exists():
+                    db = root / "places.sqlite"
+                    if str(db) not in seen_dbs:
+                        seen_dbs.add(str(db))
+                        profiles.append({"browser": name, "profile": "default",
+                                         "username": username, "db": db, "kind": "firefox"})
+                    continue
                 try:
                     for d in root.iterdir():
                         if d.is_dir() and (d / "places.sqlite").exists():
                             db = d / "places.sqlite"
                             if str(db) not in seen_dbs:
                                 seen_dbs.add(str(db))
-                                profiles.append({"browser": "Firefox", "profile": d.name,
+                                profiles.append({"browser": name, "profile": d.name,
                                                  "username": username, "db": db, "kind": "firefox"})
                 except PermissionError:
-                    continue
+                    pass
                 continue
 
-            # Chromium-family: Default + Profile N
+            # Chromium-family (History)
             candidates = [("Default", root / "Default")] + \
                          [(d.name, d) for d in root.glob("Profile *") if d.is_dir()]
             for subdir_name, subdir_path in candidates:
@@ -268,7 +306,6 @@ class BrowserMonitor:
                                 exts[eid.name] = {"name": n, "version": d.get('version', '0')}
                         except Exception:
                             pass
-
         elif profile["kind"] == "firefox":
             ejson = profile["db"].parent / "extensions.json"
             if ejson.exists():
@@ -303,7 +340,6 @@ class BrowserMonitor:
         state_key      = f"hist_{profile['username']}_{profile['browser']}_{profile['profile']}"
         last_scan_time = self.state.get(state_key, 0)
 
-        # Copy DB to temp to avoid locked-file issues (browser may be open)
         safe_key = state_key.replace('/', '_').replace(' ', '_')
         tmp = Path(tempfile.gettempdir()) / f"bhm_{safe_key}.sqlite"
         try:
@@ -323,7 +359,6 @@ class BrowserMonitor:
                     "WHERE last_visit_time > ? ORDER BY last_visit_time ASC",
                     (last_scan_time,)
                 )
-
             elif profile["kind"] == "firefox":
                 cur.execute(
                     "SELECT h.visit_date, p.url, p.title "
@@ -332,7 +367,6 @@ class BrowserMonitor:
                     "WHERE h.visit_date > ? ORDER BY h.visit_date ASC",
                     (last_scan_time,)
                 )
-
             elif profile["kind"] == "safari":
                 threshold = (last_scan_time - MAC_EPOCH_DIFF) if last_scan_time > 0 else 0
                 cur.execute(
@@ -343,8 +377,7 @@ class BrowserMonitor:
                     (threshold,)
                 )
 
-            rows = cur.fetchall()
-            for (raw_time, url, title) in rows:
+            for (raw_time, url, title) in cur.fetchall():
                 if raw_time > new_max:
                     new_max = raw_time
                 if profile["kind"] == "chrome":
@@ -379,7 +412,7 @@ class BrowserMonitor:
             while True:
                 profiles = self._find_profiles()
                 if not profiles and self.os_type == "Linux":
-                    self.logger.warning("no_browser_profiles_found — check user home dirs")
+                    self.logger.warning("no_browser_profiles_found")
                 for profile in profiles:
                     self._process_extensions(profile)
                     self._process_history(profile)
