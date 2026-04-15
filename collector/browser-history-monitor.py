@@ -2,7 +2,7 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.4 (macOS Fix)
+Version : 2.5 (Safari WAL fix)
 Platform: Windows | Linux | macOS
 Browsers: Chrome, Edge, Brave, Firefox, Opera, OperaGX, Vivaldi,
           Waterfox, Tor, Chromium, Safari (macOS)
@@ -12,22 +12,13 @@ Reads browser SQLite history databases every 60 seconds.
 Writes syslog-format lines to browser_history.log.
 Wazuh agent picks up the log via <localfile> in ossec.conf.
 
-No internet connections made. No external dependencies.
-VT-clean: no Invoke-WebRequest, no exe patterns, no url fetch.
-
-macOS Fixes in v2.4:
-  1. _get_install_dir() now uses ~/.browser-monitor on Darwin instead
-     of /root/.browser-monitor — macOS Wazuh agent runs as the
-     logged-in user, not root, so /root/ is inaccessible.
-  2. _get_browser_roots() on Darwin now resolves all real user home
-     dirs via dscl so that Safari/Chrome paths are discovered even
-     when the script is invoked from a system context.
-  3. Safari shutil.copy2() wrapped with a clear PermissionError
-     message guiding the user to grant Full Disk Access in
-     System Settings → Privacy & Security → Full Disk Access.
-  4. Safari threshold fix: raw Core Data timestamp is stored and
-     compared directly — no MAC_EPOCH_DIFF subtraction on read-back.
-  5. run() no_browser_profiles_found warning extended to macOS.
+macOS Fixes:
+  v2.4 - Detect real GUI user / drop privs / fix root-as-user bug.
+  v2.5 - Copy Safari WAL sidecar files (-wal, -shm) alongside History.db
+         so SQLite can reconstruct the full schema. Without the -wal file
+         the copied DB appears empty (no tables) on macOS Sonoma/Sequoia.
+         Open copy with URI immutable=1 to avoid locking the live DB.
+         Clean up all three temp files on exit.
 """
 
 import os
@@ -53,7 +44,6 @@ MAC_EPOCH_DIFF    = 978307200
 
 # --- HELPERS ------------------------------------------------------------------
 def chrome_time(ts):
-    """Convert Chrome/Chromium microsecond timestamp to readable string."""
     if not ts:
         return "N/A"
     try:
@@ -63,7 +53,6 @@ def chrome_time(ts):
         return str(ts)
 
 def firefox_time(ts):
-    """Convert Firefox microsecond timestamp to readable string."""
     if not ts:
         return "N/A"
     try:
@@ -73,7 +62,6 @@ def firefox_time(ts):
         return str(ts)
 
 def safari_time(ts):
-    """Convert Safari Core Data timestamp to readable string."""
     if not ts:
         return "N/A"
     try:
@@ -94,19 +82,10 @@ class BrowserMonitor:
         self.state_path  = self.install_dir / ".browser_monitor_state.json"
         self.state       = self._load_state()
         self._setup_logging()
+        self._safari_schema_logged = False
 
     # -- paths -----------------------------------------------------------------
     def _get_install_dir(self):
-        """
-        Windows -> C:\\BrowserMonitor
-        Linux   -> /root/.browser-monitor  (agent runs as root)
-        macOS   -> ~/.browser-monitor      (agent runs as logged-in user)
-
-        FIX v2.4: macOS was incorrectly using /root/.browser-monitor.
-        macOS Wazuh agent runs as the local user, not root. Using
-        Path.home() ensures the log and state files are written to the
-        correct user-owned directory that Wazuh can watch via ossec.conf.
-        """
         if self.os_type == "Windows":
             path = Path("C:/BrowserMonitor")
         elif self.os_type == "Darwin":
@@ -167,13 +146,6 @@ class BrowserMonitor:
 
     # -- all user home dirs (macOS) --------------------------------------------
     def _get_all_mac_home_dirs(self):
-        """
-        FIX v2.4: Enumerate all real macOS user home dirs via dscl so
-        Safari/browser paths are resolved correctly even when the script
-        runs from a system/daemon context where Path.home() may return
-        /var/root instead of the actual user's home directory.
-        Falls back to Path.home() if dscl is unavailable.
-        """
         homes = set()
         homes.add(Path.home())
         try:
@@ -185,7 +157,6 @@ class BrowserMonitor:
                 parts = line.split()
                 if len(parts) == 2:
                     home = Path(parts[1])
-                    # Skip system accounts (home dirs not under /Users)
                     if home.exists() and str(home).startswith("/Users"):
                         homes.add(home)
         except Exception:
@@ -194,7 +165,6 @@ class BrowserMonitor:
 
     # -- browser root paths ----------------------------------------------------
     def _get_browser_roots(self):
-        """Return list of (browser_name, username, root_path) tuples."""
         roots = []
 
         if self.os_type == "Windows":
@@ -219,9 +189,6 @@ class BrowserMonitor:
                 ]
 
         elif self.os_type == "Darwin":
-            # FIX v2.4: Iterate all real user home dirs instead of only
-            # Path.home(). This handles daemon/root execution contexts and
-            # multi-user Macs correctly.
             for user_home in self._get_all_mac_home_dirs():
                 lib = user_home / "Library" / "Application Support"
                 usr = user_home.name
@@ -235,20 +202,17 @@ class BrowserMonitor:
                     ("Firefox",  usr, lib / "Firefox" / "Profiles"),
                     ("Waterfox", usr, lib / "Waterfox" / "Profiles"),
                     ("Chromium", usr, lib / "Chromium"),
-                    # Safari path: ~/Library/Safari (requires Full Disk Access)
                     ("Safari",   usr, user_home / "Library" / "Safari"),
                 ]
 
         elif self.os_type == "Linux":
             for home in self._get_all_home_dirs():
-                u   = home.name
-                cfg = home / ".config"
-                moz = home / ".mozilla"
+                u    = home.name
+                cfg  = home / ".config"
+                moz  = home / ".mozilla"
                 snap = home / "snap"
                 flat = home / ".var" / "app"
-
                 roots += [
-                    # ── Standard installs ──────────────────────────────────
                     ("Chrome",   u, cfg / "google-chrome"),
                     ("Chrome",   u, cfg / "google-chrome-beta"),
                     ("Chrome",   u, cfg / "google-chrome-unstable"),
@@ -265,8 +229,6 @@ class BrowserMonitor:
                     ("Firefox",  u, moz / "firefox"),
                     ("Waterfox", u, home / ".waterfox"),
                     ("Tor",      u, home / ".tor-browser" / "app" / "Browser" / "TorBrowser" / "Data" / "Browser" / "profile.default"),
-
-                    # ── Snap installs ──────────────────────────────────────
                     ("Firefox",  u, snap / "firefox" / "common" / ".mozilla" / "firefox"),
                     ("Chromium", u, snap / "chromium" / "current" / ".config" / "chromium"),
                     ("Chrome",   u, snap / "google-chrome" / "current" / ".config" / "google-chrome"),
@@ -274,8 +236,6 @@ class BrowserMonitor:
                     ("Brave",    u, snap / "brave" / "current" / ".config" / "BraveSoftware" / "Brave-Browser"),
                     ("Opera",    u, snap / "opera" / "current" / ".config" / "opera"),
                     ("Vivaldi",  u, snap / "vivaldi" / "current" / ".config" / "vivaldi"),
-
-                    # ── Flatpak installs ───────────────────────────────────
                     ("Firefox",  u, flat / "org.mozilla.firefox" / ".mozilla" / "firefox"),
                     ("Waterfox", u, flat / "net.waterfox.waterfox" / ".waterfox"),
                     ("Chrome",   u, flat / "com.google.Chrome" / ".config" / "google-chrome"),
@@ -290,8 +250,8 @@ class BrowserMonitor:
 
     # -- profile enumeration ---------------------------------------------------
     def _find_profiles(self):
-        profiles = []
-        seen_dbs = set()
+        profiles  = []
+        seen_dbs  = set()
 
         for name, username, root in self._get_browser_roots():
             if not root.exists():
@@ -305,7 +265,6 @@ class BrowserMonitor:
                                      "username": username, "db": db, "kind": "safari"})
                 continue
 
-            # Firefox-family (places.sqlite)
             if name in ("Firefox", "Waterfox", "Tor"):
                 if name == "Tor" and (root / "places.sqlite").exists():
                     db = root / "places.sqlite"
@@ -326,7 +285,6 @@ class BrowserMonitor:
                     pass
                 continue
 
-            # Chromium-family (History)
             candidates = [("Default", root / "Default")] + \
                          [(d.name, d) for d in root.glob("Profile *") if d.is_dir()]
             for subdir_name, subdir_path in candidates:
@@ -390,21 +348,45 @@ class BrowserMonitor:
                 )
         self.state[key] = current
 
+    # -- Safari WAL-aware copy -------------------------------------------------
+    def _copy_safari_db(self, src_db: Path, tmp_dir: Path) -> Path:
+        """
+        FIX v2.5: Safari on macOS Sonoma/Sequoia uses WAL journal mode.
+        Copying only History.db yields a schema-less shell — SQLite needs
+        the matching -wal and -shm sidecar files to reconstruct the full DB.
+
+        Strategy:
+          1. Copy History.db  -> tmp_dir/History.db
+          2. Copy History.db-wal -> tmp_dir/History.db-wal  (if present)
+          3. Copy History.db-shm -> tmp_dir/History.db-shm  (if present)
+          4. Open with uri=True + ?immutable=1 so SQLite reads the WAL
+             without trying to write a new lock file on the original path.
+
+        Returns the Path to the copied DB inside tmp_dir, or raises.
+        """
+        dst = tmp_dir / "History.db"
+        shutil.copy2(src_db, dst)
+        for ext in ("-wal", "-shm"):
+            sidecar = Path(str(src_db) + ext)
+            if sidecar.exists():
+                shutil.copy2(sidecar, tmp_dir / ("History.db" + ext))
+        return dst
+
     # -- history processing ----------------------------------------------------
     def _process_history(self, profile):
         state_key      = f"hist_{profile['username']}_{profile['browser']}_{profile['profile']}"
         last_scan_time = self.state.get(state_key, 0)
 
         safe_key = state_key.replace('/', '_').replace(' ', '_')
-        tmp = Path(tempfile.gettempdir()) / f"bhm_{safe_key}.sqlite"
+        tmp_dir  = Path(tempfile.mkdtemp(prefix="bhm_"))
+        tmp_db   = tmp_dir / f"{safe_key}.sqlite"
 
-        # FIX v2.4: Catch PermissionError on Safari copy and emit a
-        # clear actionable log message instead of silently returning.
-        # Safari's History.db is TCC-protected on macOS Sonoma+.
-        # Resolution: System Settings → Privacy & Security →
-        # Full Disk Access → add Terminal (or Python binary).
+        # --- copy the DB (Safari gets WAL-aware copy, others get simple copy)
         try:
-            shutil.copy2(profile["db"], tmp)
+            if profile["kind"] == "safari":
+                tmp_db = self._copy_safari_db(profile["db"], tmp_dir)
+            else:
+                shutil.copy2(profile["db"], tmp_db)
         except PermissionError:
             if profile["browser"] == "Safari":
                 self.logger.error(
@@ -418,19 +400,27 @@ class BrowserMonitor:
                     "Permission denied reading %s history for user '%s': %s",
                     profile["browser"], profile["username"], profile["db"]
                 )
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             return
         except Exception as e:
             self.logger.error(
                 "Cannot copy %s DB for user '%s': %s",
                 profile["browser"], profile["username"], e
             )
+            shutil.rmtree(tmp_dir, ignore_errors=True)
             return
 
         conn    = None
         new_max = last_scan_time
         try:
-            conn = sqlite3.connect(str(tmp))
-            cur  = conn.cursor()
+            if profile["kind"] == "safari":
+                # immutable=1 tells SQLite to read the WAL without acquiring
+                # any locks, preventing SQLITE_BUSY on the live DB copy.
+                uri = f"file:{tmp_db}?immutable=1"
+                conn = sqlite3.connect(uri, uri=True)
+            else:
+                conn = sqlite3.connect(str(tmp_db))
+            cur = conn.cursor()
 
             if profile["kind"] == "chrome":
                 cur.execute(
@@ -447,11 +437,14 @@ class BrowserMonitor:
                     (last_scan_time,)
                 )
             elif profile["kind"] == "safari":
-                # FIX v2.4: Store and compare raw Safari Core Data timestamps
-                # directly. Previous code subtracted MAC_EPOCH_DIFF before
-                # storing, causing the threshold to be a Unix timestamp while
-                # the DB column holds a Core Data timestamp — mismatch skipped
-                # all rows after the first scan.
+                # Log the actual table list once for debugging (removed after
+                # first successful read so it doesn't spam the log).
+                if not self._safari_schema_logged:
+                    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                    tables = [r[0] for r in cur.fetchall()]
+                    self.logger.info("Safari DB tables: %s", tables)
+                    self._safari_schema_logged = True
+
                 threshold = last_scan_time if last_scan_time > 0 else 0
                 cur.execute(
                     "SELECT v.visit_time, i.url, v.title "
@@ -483,10 +476,7 @@ class BrowserMonitor:
         finally:
             if conn:
                 conn.close()
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
         self.state[state_key] = new_max
 
@@ -495,7 +485,6 @@ class BrowserMonitor:
         try:
             while True:
                 profiles = self._find_profiles()
-                # FIX v2.4: Extended no_browser_profiles_found warning to macOS
                 if not profiles and self.os_type in ("Linux", "Darwin"):
                     self.logger.warning("no_browser_profiles_found")
                 for profile in profiles:
