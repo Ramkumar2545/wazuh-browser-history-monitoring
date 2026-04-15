@@ -1,50 +1,57 @@
 <!--
   Wazuh Browser History Decoder
   Author : Ram Kumar G (IT Fortress)
-  Version: 2.7
+  Version: 2.8
 
-  Raw log format (6 space-separated fields after timestamp):
-    Apr 15 17:52:23 blackwebs-Mac.local browser-monitor: 2026-04-15 17:51:39 Safari blackweb Default https://twitter.com/ X. It's what's happening
+  FIX (v2.8):
+    1. program_name hyphen escaped: browser\-monitor
+       (Wazuh uses POSIX regex for program_name — unescaped hyphen
+        inside a character class means range; outside it still causes
+        parse ambiguity. Escape it to be safe.)
+    2. Added <use_own_name> to parent so Wazuh tracks it by name
+       and the child <parent> reference resolves correctly.
+    3. Child decoder has NO <prematch> — only <parent> + <regex>.
+       Wazuh child decoders must NOT repeat prematch; they inherit
+       the matched buffer from the parent and apply regex directly.
 
-  Fields in order:
-    1. mon_browse_time     = 2026-04-15 17:51:39   (date + time, 2 tokens captured as one)
+  Raw log format (post syslog-strip, what decoders see):
+    2026-04-15 18:00:27 Safari blackweb Default https://www.facebook.com/ Facebook
+
+  Fields:
+    1. mon_browse_time     = 2026-04-15 18:00:27
     2. mon_browser_name    = Safari
     3. mon_username        = blackweb
     4. mon_browser_profile = Default
-    5. mon_url             = https://twitter.com/
-    6. mon_page_title      = X. It's what's happening / X
-
-  Decoder chain:
-    browser-monitor-log          (parent)  — matches visit lines by prematch
-    browser-monitor-log-fields   (child)   — extracts the 6 fields via pcre2
-
-  Rules MUST use <decoded_as>browser-monitor-log-fields</decoded_as>
-  to fire on events that have decoded field values.
-  Using the parent decoder name gives no field extraction = no child rules fire.
+    5. mon_url             = https://www.facebook.com/
+    6. mon_page_title      = Facebook - Log in or sign up
 -->
 
-<!-- Service lifecycle lines: service_started, service_stopped, no_browser_profiles_found -->
+<!-- Service lifecycle: service_started / service_stopped / no_browser_profiles_found -->
 <decoder name="browser-monitor-service">
-  <program_name>^browser-monitor$</program_name>
+  <program_name>^browser\-monitor$</program_name>
   <prematch>^service_|^no_browser</prematch>
 </decoder>
 
-<!-- Parent: matches any visit line starting with a timestamp -->
+<!-- PARENT: match any visit line (starts with ISO timestamp) -->
 <decoder name="browser-monitor-log">
-  <program_name>^browser-monitor$</program_name>
-  <prematch>^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}</prematch>
+  <program_name>^browser\-monitor$</program_name>
+  <prematch>^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d</prematch>
+  <use_own_name>yes</use_own_name>
 </decoder>
 
-<!--
-  Child: extracts all 6 fields.
+<!-- CHILD: extract all 6 fields from the visit line.
+     No <prematch> here — child inherits parent's matched buffer.
 
-  Regex breakdown (pcre2):
-    (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})  = timestamp  -> mon_browse_time
-    \s+(\S+)                                 = browser    -> mon_browser_name
-    \s+(\S+)                                 = username   -> mon_username
-    \s+(\S+)                                 = profile    -> mon_browser_profile
-    \s+(\S+)                                 = url        -> mon_url
-    \s+(.+)$                                 = title      -> mon_page_title
+     Regex captures:
+       Group 1: timestamp   e.g. 2026-04-15 18:00:27
+       Group 2: browser     e.g. Safari
+       Group 3: username    e.g. blackweb
+       Group 4: profile     e.g. Default
+       Group 5: url         e.g. https://www.facebook.com/
+       Group 6: title       e.g. Facebook - Log in or sign up  (or "No Title")
+
+     URL group uses [^\s]+ (one-or-more non-whitespace) to handle
+     any URL format including those wrapped in brackets.
 -->
 <decoder name="browser-monitor-log-fields">
   <parent>browser-monitor-log</parent>
