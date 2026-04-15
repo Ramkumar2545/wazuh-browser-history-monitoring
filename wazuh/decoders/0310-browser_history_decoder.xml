@@ -26,7 +26,6 @@
     6. mon_page_title      = Facebook - Log in or sign up
 -->
 
-<!-- Service lifecycle: service_started / service_stopped / no_browser_profiles_found -->
 <decoder name="browser-monitor-service">
   <program_name>^browser\-monitor$</program_name>
   <prematch>^service_|^no_browser</prematch>
@@ -34,25 +33,10 @@
 
 <!-- PARENT: match any visit line (starts with ISO timestamp) -->
 <decoder name="browser-monitor-log">
-  <program_name>^browser\-monitor$</program_name>
-  <prematch>^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d</prematch>
-  <use_own_name>yes</use_own_name>
+  <program_name>^browser-monitor$</program_name>
+  <prematch>\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d</prematch>
 </decoder>
 
-<!-- CHILD: extract all 6 fields from the visit line.
-     No <prematch> here — child inherits parent's matched buffer.
-
-     Regex captures:
-       Group 1: timestamp   e.g. 2026-04-15 18:00:27
-       Group 2: browser     e.g. Safari
-       Group 3: username    e.g. blackweb
-       Group 4: profile     e.g. Default
-       Group 5: url         e.g. https://www.facebook.com/
-       Group 6: title       e.g. Facebook - Log in or sign up  (or "No Title")
-
-     URL group uses [^\s]+ (one-or-more non-whitespace) to handle
-     any URL format including those wrapped in brackets.
--->
 <decoder name="browser-monitor-log-fields">
   <parent>browser-monitor-log</parent>
   <regex type="pcre2">^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$</regex>
