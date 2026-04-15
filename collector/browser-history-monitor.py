@@ -2,7 +2,7 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.3
+Version : 2.4 (macOS Fix)
 Platform: Windows | Linux | macOS
 Browsers: Chrome, Edge, Brave, Firefox, Opera, OperaGX, Vivaldi,
           Waterfox, Tor, Chromium, Safari (macOS)
@@ -14,6 +14,20 @@ Wazuh agent picks up the log via <localfile> in ossec.conf.
 
 No internet connections made. No external dependencies.
 VT-clean: no Invoke-WebRequest, no exe patterns, no url fetch.
+
+macOS Fixes in v2.4:
+  1. _get_install_dir() now uses ~/.browser-monitor on Darwin instead
+     of /root/.browser-monitor — macOS Wazuh agent runs as the
+     logged-in user, not root, so /root/ is inaccessible.
+  2. _get_browser_roots() on Darwin now resolves all real user home
+     dirs via dscl so that Safari/Chrome paths are discovered even
+     when the script is invoked from a system context.
+  3. Safari shutil.copy2() wrapped with a clear PermissionError
+     message guiding the user to grant Full Disk Access in
+     System Settings → Privacy & Security → Full Disk Access.
+  4. Safari threshold fix: raw Core Data timestamp is stored and
+     compared directly — no MAC_EPOCH_DIFF subtraction on read-back.
+  5. run() no_browser_profiles_found warning extended to macOS.
 """
 
 import os
@@ -25,6 +39,7 @@ import json
 import logging
 import socket
 import tempfile
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -82,11 +97,20 @@ class BrowserMonitor:
 
     # -- paths -----------------------------------------------------------------
     def _get_install_dir(self):
-        # Windows -> C:\BrowserMonitor
-        # Linux   -> /root/.browser-monitor (agent runs as root, log watched by Wazuh)
-        # macOS   -> ~/.browser-monitor
+        """
+        Windows -> C:\\BrowserMonitor
+        Linux   -> /root/.browser-monitor  (agent runs as root)
+        macOS   -> ~/.browser-monitor      (agent runs as logged-in user)
+
+        FIX v2.4: macOS was incorrectly using /root/.browser-monitor.
+        macOS Wazuh agent runs as the local user, not root. Using
+        Path.home() ensures the log and state files are written to the
+        correct user-owned directory that Wazuh can watch via ossec.conf.
+        """
         if self.os_type == "Windows":
             path = Path("C:/BrowserMonitor")
+        elif self.os_type == "Darwin":
+            path = Path.home() / ".browser-monitor"
         else:
             path = Path("/root/.browser-monitor")
         path.mkdir(parents=True, exist_ok=True)
@@ -141,6 +165,33 @@ class BrowserMonitor:
             pass
         return list(homes)
 
+    # -- all user home dirs (macOS) --------------------------------------------
+    def _get_all_mac_home_dirs(self):
+        """
+        FIX v2.4: Enumerate all real macOS user home dirs via dscl so
+        Safari/browser paths are resolved correctly even when the script
+        runs from a system/daemon context where Path.home() may return
+        /var/root instead of the actual user's home directory.
+        Falls back to Path.home() if dscl is unavailable.
+        """
+        homes = set()
+        homes.add(Path.home())
+        try:
+            result = subprocess.run(
+                ["dscl", ".", "-list", "/Users", "NFSHomeDirectory"],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                parts = line.split()
+                if len(parts) == 2:
+                    home = Path(parts[1])
+                    # Skip system accounts (home dirs not under /Users)
+                    if home.exists() and str(home).startswith("/Users"):
+                        homes.add(home)
+        except Exception:
+            pass
+        return list(homes)
+
     # -- browser root paths ----------------------------------------------------
     def _get_browser_roots(self):
         """Return list of (browser_name, username, root_path) tuples."""
@@ -168,20 +219,25 @@ class BrowserMonitor:
                 ]
 
         elif self.os_type == "Darwin":
-            lib = self.user_home / "Library" / "Application Support"
-            usr = self.user_home.name
-            roots += [
-                ("Chrome",   usr, lib / "Google" / "Chrome"),
-                ("Edge",     usr, lib / "Microsoft Edge"),
-                ("Brave",    usr, lib / "BraveSoftware" / "Brave-Browser"),
-                ("Vivaldi",  usr, lib / "Vivaldi"),
-                ("Opera",    usr, lib / "com.operasoftware.Opera"),
-                ("OperaGX",  usr, lib / "com.operasoftware.OperaGX"),
-                ("Firefox",  usr, lib / "Firefox" / "Profiles"),
-                ("Waterfox", usr, lib / "Waterfox" / "Profiles"),
-                ("Chromium", usr, lib / "Chromium"),
-                ("Safari",   usr, self.user_home / "Library" / "Safari"),
-            ]
+            # FIX v2.4: Iterate all real user home dirs instead of only
+            # Path.home(). This handles daemon/root execution contexts and
+            # multi-user Macs correctly.
+            for user_home in self._get_all_mac_home_dirs():
+                lib = user_home / "Library" / "Application Support"
+                usr = user_home.name
+                roots += [
+                    ("Chrome",   usr, lib / "Google" / "Chrome"),
+                    ("Edge",     usr, lib / "Microsoft Edge"),
+                    ("Brave",    usr, lib / "BraveSoftware" / "Brave-Browser"),
+                    ("Vivaldi",  usr, lib / "Vivaldi"),
+                    ("Opera",    usr, lib / "com.operasoftware.Opera"),
+                    ("OperaGX",  usr, lib / "com.operasoftware.OperaGX"),
+                    ("Firefox",  usr, lib / "Firefox" / "Profiles"),
+                    ("Waterfox", usr, lib / "Waterfox" / "Profiles"),
+                    ("Chromium", usr, lib / "Chromium"),
+                    # Safari path: ~/Library/Safari (requires Full Disk Access)
+                    ("Safari",   usr, user_home / "Library" / "Safari"),
+                ]
 
         elif self.os_type == "Linux":
             for home in self._get_all_home_dirs():
@@ -251,7 +307,6 @@ class BrowserMonitor:
 
             # Firefox-family (places.sqlite)
             if name in ("Firefox", "Waterfox", "Tor"):
-                # Tor profile.default is a direct profile dir, not a profiles root
                 if name == "Tor" and (root / "places.sqlite").exists():
                     db = root / "places.sqlite"
                     if str(db) not in seen_dbs:
@@ -342,9 +397,33 @@ class BrowserMonitor:
 
         safe_key = state_key.replace('/', '_').replace(' ', '_')
         tmp = Path(tempfile.gettempdir()) / f"bhm_{safe_key}.sqlite"
+
+        # FIX v2.4: Catch PermissionError on Safari copy and emit a
+        # clear actionable log message instead of silently returning.
+        # Safari's History.db is TCC-protected on macOS Sonoma+.
+        # Resolution: System Settings → Privacy & Security →
+        # Full Disk Access → add Terminal (or Python binary).
         try:
             shutil.copy2(profile["db"], tmp)
-        except Exception:
+        except PermissionError:
+            if profile["browser"] == "Safari":
+                self.logger.error(
+                    "Safari history access denied for user '%s'. "
+                    "Grant Full Disk Access to Terminal/Python in: "
+                    "System Settings > Privacy & Security > Full Disk Access",
+                    profile["username"]
+                )
+            else:
+                self.logger.error(
+                    "Permission denied reading %s history for user '%s': %s",
+                    profile["browser"], profile["username"], profile["db"]
+                )
+            return
+        except Exception as e:
+            self.logger.error(
+                "Cannot copy %s DB for user '%s': %s",
+                profile["browser"], profile["username"], e
+            )
             return
 
         conn    = None
@@ -368,7 +447,12 @@ class BrowserMonitor:
                     (last_scan_time,)
                 )
             elif profile["kind"] == "safari":
-                threshold = (last_scan_time - MAC_EPOCH_DIFF) if last_scan_time > 0 else 0
+                # FIX v2.4: Store and compare raw Safari Core Data timestamps
+                # directly. Previous code subtracted MAC_EPOCH_DIFF before
+                # storing, causing the threshold to be a Unix timestamp while
+                # the DB column holds a Core Data timestamp — mismatch skipped
+                # all rows after the first scan.
+                threshold = last_scan_time if last_scan_time > 0 else 0
                 cur.execute(
                     "SELECT v.visit_time, i.url, v.title "
                     "FROM history_visits v "
@@ -411,7 +495,8 @@ class BrowserMonitor:
         try:
             while True:
                 profiles = self._find_profiles()
-                if not profiles and self.os_type == "Linux":
+                # FIX v2.4: Extended no_browser_profiles_found warning to macOS
+                if not profiles and self.os_type in ("Linux", "Darwin"):
                     self.logger.warning("no_browser_profiles_found")
                 for profile in profiles:
                     self._process_extensions(profile)
