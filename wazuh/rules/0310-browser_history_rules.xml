@@ -46,10 +46,11 @@
        ⚠️  MUST be FIRST child rule.
        level="0" = completely hidden from dashboard.
        ═══════════════════════════════════════════════════ -->
-  <rule id="900114" level="0">
+  <rule id="900114" level="3">
     <if_sid>900100</if_sid>
-    <regex type="pcre2">No Title\s*$</regex>
-    <description>Browser redirect/prefetch suppressed - No Title entry ignored</description>
+    <field name="mon_page_title" type="pcre2">^No Title\s*$</field>
+    <description>Browser Background/Redirect (No Title): $(mon_browser_name) [$(mon_username)] visited $(mon_url)</description>
+    <group>browser_history,background_request,</group>
   </rule>
 
   <!-- ═══════════════════════════════════════════════════
@@ -183,7 +184,7 @@
   <!-- ═══════════════════════════════════════════════════
        900113: Service lifecycle events
        ═══════════════════════════════════════════════════ -->
-  <rule id="900113" level="1">
+  <rule id="900113" level="3">
     <decoded_as>browser-monitor-service</decoded_as>
     <description>Browser Monitor: Service event on $(agent.name)</description>
     <group>browser_history,service_lifecycle,</group>
@@ -192,7 +193,7 @@
   <!-- ═══════════════════════════════════════════════════
        900115: Gaming sites
        ═══════════════════════════════════════════════════ -->
-  <rule id="900115" level="2">
+  <rule id="900115" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(xbox\.com|store\.steampowered\.com|epicgames\.com|twitch\.tv|battle\.net|ea\.com|ubisoft\.com|roblox\.com|minecraft\.net)</regex>
     <description>Browser Gaming Site: Gaming platform visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
@@ -202,7 +203,7 @@
   <!-- ═══════════════════════════════════════════════════
        900116: Streaming / entertainment
        ═══════════════════════════════════════════════════ -->
-  <rule id="900116" level="2">
+  <rule id="900116" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(youtube\.com|netflix\.com|primevideo\.com|hotstar\.com|hulu\.com|disneyplus\.com|spotify\.com|soundcloud\.com)</regex>
     <description>Browser Streaming: Media/streaming site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
@@ -222,7 +223,7 @@
   <!-- ═══════════════════════════════════════════════════
        900118: Shopping / e-commerce
        ═══════════════════════════════════════════════════ -->
-  <rule id="900118" level="2">
+  <rule id="900118" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(amazon\.com|amazon\.in|flipkart\.com|ebay\.com|aliexpress\.com|myntra\.com|meesho\.com|snapdeal\.com|shopify\.com)</regex>
     <description>Browser Shopping: E-commerce site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
@@ -232,7 +233,7 @@
   <!-- ═══════════════════════════════════════════════════
        900119: News sites
        ═══════════════════════════════════════════════════ -->
-  <rule id="900119" level="1">
+  <rule id="900119" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(bbc\.com|cnn\.com|reuters\.com|theguardian\.com|ndtv\.com|thehindu\.com|timesofindia\.com|indiatimes\.com|hindustantimes\.com|techcrunch\.com|thehackernews\.com)</regex>
     <description>Browser News: News/media site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
@@ -242,7 +243,7 @@
   <!-- ═══════════════════════════════════════════════════
        900120: Developer / security / DevOps tools
        ═══════════════════════════════════════════════════ -->
-  <rule id="900120" level="2">
+  <rule id="900120" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(github\.com|gitlab\.com|stackoverflow\.com|npmjs\.com|pypi\.org|hub\.docker\.com|kubernetes\.io|terraform\.io|ansible\.com|splunk\.com|elastic\.co)</regex>
     <description>Browser Dev Tool: Developer/DevOps site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
@@ -264,7 +265,7 @@
                Ensures 100% visibility on ALL visits.
        ⚠️  MUST be the LAST child rule.
        ═══════════════════════════════════════════════════ -->
-  <rule id="900122" level="2">
+  <rule id="900122" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">https?://\S+</regex>
     <description>Browser General Visit: $(mon_browser_name) [$(mon_username)] - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
