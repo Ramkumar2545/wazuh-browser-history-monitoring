@@ -2,7 +2,7 @@
 # =============================================================================
 # Wazuh Browser Monitor - One-Line Bootstrap Installer for Linux / macOS
 # Author  : Ram Kumar G (IT Fortress)
-# Version : 2.2
+# Version : 2.3 (macOS Fix)
 # Repo    : https://github.com/Ramkumar2545/wazuh-browser-history-monitoring
 #
 # USAGE:
@@ -13,7 +13,7 @@
 #   - Normal Linux (systemd user session)
 #   - Root user (systemd system service)
 #   - Docker / LXC / containers (nohup fallback)
-#   - macOS (LaunchAgent)
+#   - macOS (LaunchAgent via launchctl bootstrap)
 # =============================================================================
 
 # NOTE: Do NOT use set -e — systemctl --user fails in Docker/LXC
@@ -24,19 +24,45 @@ BLUE='\033[0;34m'; NC='\033[0m'
 
 REPO_BASE="https://raw.githubusercontent.com/Ramkumar2545/wazuh-browser-history-monitoring/main"
 COLLECTOR_URL="$REPO_BASE/collector/browser-history-monitor.py"
-INSTALL_DIR="$HOME/.browser-monitor"
+
+# FIX v2.3: INSTALL_DIR and LOG_FILE defined per-OS after we know the OS.
+# macOS Wazuh agent runs as the logged-in user -> ~/.browser-monitor
+# Linux root agent runs as root              -> /root/.browser-monitor
+# Linux non-root                              -> ~/.browser-monitor
+OS="$(uname -s)"
+
+if [ "$OS" = "Darwin" ]; then
+    INSTALL_DIR="$HOME/.browser-monitor"
+else
+    if [ "$(id -u)" -eq 0 ]; then
+        INSTALL_DIR="/root/.browser-monitor"
+    else
+        INSTALL_DIR="$HOME/.browser-monitor"
+    fi
+fi
+
 DEST_SCRIPT="$INSTALL_DIR/browser-history-monitor.py"
 LOG_FILE="$INSTALL_DIR/browser_history.log"
-WAZUH_CONF="/var/ossec/etc/ossec.conf"
+
+# FIX v2.3: macOS Wazuh agent installs to /Library/Ossec, not /var/ossec.
+# Detect the correct ossec.conf path at runtime.
+if [ "$OS" = "Darwin" ]; then
+    if [ -f "/Library/Ossec/etc/ossec.conf" ]; then
+        WAZUH_CONF="/Library/Ossec/etc/ossec.conf"
+    else
+        WAZUH_CONF="/var/ossec/etc/ossec.conf"
+    fi
+else
+    WAZUH_CONF="/var/ossec/etc/ossec.conf"
+fi
 
 echo -e ""
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║  Wazuh Browser Monitor - Installer  v2.2                ║${NC}"
+echo -e "${BLUE}║  Wazuh Browser Monitor - Installer  v2.3                ║${NC}"
 echo -e "${BLUE}║  IT Fortress | github.com/Ramkumar2545                 ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════════════════════════╝${NC}"
 echo -e ""
 
-OS="$(uname -s)"
 echo -e "${GREEN}[*] OS: $OS${NC}"
 
 # ── DETECT ENVIRONMENT ───────────────────────────────────────────────────────
@@ -48,7 +74,7 @@ if [ -f /.dockerenv ]; then
     IS_CONTAINER=1
 elif grep -qE 'docker|lxc|containerd' /proc/1/cgroup 2>/dev/null; then
     IS_CONTAINER=1
-elif ! systemctl --user status >/dev/null 2>&1; then
+elif [ "$OS" = "Linux" ] && ! systemctl --user status >/dev/null 2>&1; then
     IS_CONTAINER=1
 fi
 
@@ -57,7 +83,6 @@ if [ "$IS_CONTAINER" -eq 1 ]; then
 fi
 
 # ── NOHUP FALLBACK ───────────────────────────────────────────────────────────
-# MUST be defined BEFORE Step 4 calls it
 _start_nohup() {
     pkill -f "browser-history-monitor.py" 2>/dev/null || true
     sleep 1
@@ -132,7 +157,6 @@ echo -e "${YELLOW}[4] Setting up background service...${NC}"
 if [ "$OS" = "Linux" ]; then
 
     if [ "$IS_ROOT" -eq 1 ] || [ "$IS_CONTAINER" -eq 1 ]; then
-        # Path A: root/container → try systemd system, fallback nohup
         SERVICE_FILE="/etc/systemd/system/browser-monitor.service"
         cat > "$SERVICE_FILE" <<EOF
 [Unit]
@@ -167,7 +191,6 @@ EOF
         fi
 
     else
-        # Path B: non-root with D-Bus → systemd user, fallback nohup
         SERVICE_DIR="$HOME/.config/systemd/user"
         mkdir -p "$SERVICE_DIR"
         cat > "$SERVICE_DIR/browser-monitor.service" <<EOF
@@ -205,6 +228,7 @@ elif [ "$OS" = "Darwin" ]; then
     LABEL="com.ramkumar.browser-monitor"
     PLIST_FILE="$PLIST_DIR/$LABEL.plist"
     mkdir -p "$PLIST_DIR"
+
     cat > "$PLIST_FILE" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -221,19 +245,53 @@ elif [ "$OS" = "Darwin" ]; then
 </dict>
 </plist>
 EOF
-    launchctl unload "$PLIST_FILE" 2>/dev/null || true
-    launchctl load "$PLIST_FILE"
-    sleep 2
-    if launchctl list | grep -q "$LABEL"; then
-        echo -e "${GREEN}    [+] LaunchAgent running: $LABEL${NC}"
+
+    # FIX v2.3: macOS 10.15+ deprecates `launchctl load/unload`.
+    # Use `launchctl bootstrap / bootout` with the GUI session domain
+    # (gui/UID) which is the correct domain for LaunchAgents.
+    # Falls back to legacy load for older macOS versions.
+    MAC_UID=$(id -u)
+    launchctl bootout "gui/$MAC_UID/$LABEL" 2>/dev/null || \
+        launchctl unload "$PLIST_FILE" 2>/dev/null || true
+    sleep 1
+
+    # FIX v2.3: Show Full Disk Access reminder BEFORE starting the agent
+    # so the user can grant it if needed, preventing a silent failure on
+    # the first scan attempt for Safari history.
+    echo -e ""
+    echo -e "${YELLOW}  ┌─────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${YELLOW}  │  REQUIRED for Safari history monitoring:                │${NC}"
+    echo -e "${YELLOW}  │  Grant Full Disk Access to Python / Terminal:           │${NC}"
+    echo -e "${YELLOW}  │  System Settings → Privacy & Security →                 │${NC}"
+    echo -e "${YELLOW}  │  Full Disk Access → [ + ] → add: $PYTHON_BIN  │${NC}"
+    echo -e "${YELLOW}  │  Also add Terminal.app if running interactively.        │${NC}"
+    echo -e "${YELLOW}  └─────────────────────────────────────────────────────────┘${NC}"
+    echo -e ""
+
+    if launchctl bootstrap "gui/$MAC_UID" "$PLIST_FILE" 2>/dev/null; then
+        sleep 2
+        if launchctl print "gui/$MAC_UID/$LABEL" 2>/dev/null | grep -q 'state = running'; then
+            echo -e "${GREEN}    [+] LaunchAgent running: $LABEL${NC}"
+        else
+            # Service loaded but not yet running — this is normal before FDA grant
+            echo -e "${GREEN}    [+] LaunchAgent loaded: $LABEL${NC}"
+            echo -e "${YELLOW}    [!] Collector will start automatically after Full Disk Access is granted.${NC}"
+        fi
     else
-        echo -e "${YELLOW}    [!] Grant Full Disk Access to: $PYTHON_BIN${NC}"
-        echo "        System Settings → Privacy & Security → Full Disk Access"
+        # Fallback for older macOS (pre-Catalina)
+        launchctl load "$PLIST_FILE" 2>/dev/null
+        sleep 2
+        if launchctl list | grep -q "$LABEL"; then
+            echo -e "${GREEN}    [+] LaunchAgent loaded (legacy): $LABEL${NC}"
+        else
+            echo -e "${RED}    [-] LaunchAgent failed to load. Check: $INSTALL_DIR/error.log${NC}"
+        fi
     fi
 fi
 
 # ── STEP 5: WAZUH OSSEC.CONF ──────────────────────────────────────────────────
 echo -e "${YELLOW}[5] Updating Wazuh ossec.conf...${NC}"
+echo -e "    Config path: $WAZUH_CONF"
 MARKER="<!-- BROWSER_MONITOR -->"
 
 if [ -f "$WAZUH_CONF" ]; then
@@ -244,10 +302,17 @@ if [ -f "$WAZUH_CONF" ]; then
             sed -i "s|</ossec_config>|\n  $MARKER\n  <localfile>\n    <location>$LOG_FILE</location>\n    <log_format>syslog</log_format>\n  </localfile>\n</ossec_config>|" "$WAZUH_CONF"
         fi
         echo -e "${GREEN}    [+] localfile block added to ossec.conf${NC}"
-        systemctl restart wazuh-agent 2>/dev/null || \
-            /Library/Ossec/bin/wazuh-control restart 2>/dev/null || \
-            /var/ossec/bin/wazuh-control restart 2>/dev/null || true
-        echo -e "${GREEN}    [+] Wazuh agent restarted${NC}"
+        # FIX v2.3: Use the correct Wazuh restart command for macOS.
+        # macOS Wazuh agent binary lives in /Library/Ossec/bin/.
+        if [ "$OS" = "Darwin" ]; then
+            /Library/Ossec/bin/wazuh-control restart 2>/dev/null && \
+                echo -e "${GREEN}    [+] Wazuh agent restarted${NC}" || \
+                echo -e "${YELLOW}    [!] Restart manually: sudo /Library/Ossec/bin/wazuh-control restart${NC}"
+        else
+            systemctl restart wazuh-agent 2>/dev/null || \
+                /var/ossec/bin/wazuh-control restart 2>/dev/null || true
+            echo -e "${GREEN}    [+] Wazuh agent restarted${NC}"
+        fi
     else
         echo -e "${GREEN}    [=] ossec.conf already configured — skipping${NC}"
     fi
@@ -262,15 +327,24 @@ fi
 # ── DONE ──────────────────────────────────────────────────────────────────────
 echo -e ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  [SUCCESS] Installation Complete! v2.2                  ║${NC}"
+echo -e "${GREEN}║  [SUCCESS] Installation Complete! v2.3                  ║${NC}"
 echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
 echo -e ""
 echo "  Collector : $DEST_SCRIPT"
 echo "  Log file  : $LOG_FILE"
+echo "  Config    : $WAZUH_CONF"
 echo ""
 echo "  Watch logs    : tail -f $LOG_FILE"
-echo "  Check PID     : cat $INSTALL_DIR/browser-monitor.pid"
-echo "  Restart       : bash $INSTALL_DIR/restart.sh"
+if [ "$OS" = "Darwin" ]; then
+    MAC_UID=$(id -u)
+    LABEL="com.ramkumar.browser-monitor"
+    echo "  Service status: launchctl print gui/$MAC_UID/$LABEL"
+    echo "  Stop service  : launchctl bootout gui/$MAC_UID/$LABEL"
+    echo "  Restart       : launchctl bootstrap gui/$MAC_UID $HOME/Library/LaunchAgents/$LABEL.plist"
+else
+    echo "  Check PID     : cat $INSTALL_DIR/browser-monitor.pid"
+    echo "  Restart       : bash $INSTALL_DIR/restart.sh"
+fi
 echo ""
 echo "  Wazuh Manager — deploy decoder + rules:"
 echo "  https://github.com/Ramkumar2545/wazuh-browser-history-monitoring"
