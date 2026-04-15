@@ -2,7 +2,7 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.6 (Safari WAL checkpoint fix)
+Version : 2.7 (Universal macOS Safari support)
 Platform: Windows | Linux | macOS
 Browsers: Chrome, Edge, Brave, Firefox, Opera, OperaGX, Vivaldi,
           Waterfox, Tor, Chromium, Safari (macOS)
@@ -12,14 +12,19 @@ Reads browser SQLite history databases every 60 seconds.
 Writes syslog-format lines to browser_history.log.
 Wazuh agent picks up the log via <localfile> in ossec.conf.
 
-macOS Fixes:
+macOS Safari fixes (all versions supported):
   v2.4 - Detect real GUI user / drop privs for LaunchAgent.
   v2.5 - Copy WAL sidecar files alongside History.db.
-  v2.6 - Safari stores ALL recent visits in History.db-wal (1.2MB),
-         not in History.db (4KB stub). After copying the 3 sidecar
-         files, open the copy and run PRAGMA wal_checkpoint(TRUNCATE)
-         to flush WAL pages into the DB before querying. Drop
-         ?immutable=1 which blocked WAL replay on copied DBs.
+  v2.6 - Run PRAGMA wal_checkpoint(TRUNCATE) on the copy so WAL rows
+         (stored in History.db-wal, NOT History.db) become visible.
+         Drop ?immutable=1 which blocked WAL replay.
+  v2.7 - Detect journal_mode at runtime before copying:
+           WAL mode    (macOS Ventura/Sonoma/Sequoia+): copy all sidecar
+                       files (-wal, -shm, -lock) then checkpoint the copy.
+           DELETE mode (older macOS / fresh installs): plain shutil.copy2,
+                       no sidecar files needed.
+         Logs journal_mode once on first scan for diagnostics.
+         Fully compatible with all macOS versions.
 """
 
 import os
@@ -349,43 +354,69 @@ class BrowserMonitor:
                 )
         self.state[key] = current
 
-    # -- Safari WAL-aware copy + checkpoint ------------------------------------
+    # -- Safari universal copy (all macOS versions) ----------------------------
     def _copy_safari_db(self, src_db: Path, tmp_dir: Path) -> Path:
         """
-        FIX v2.6 — Root cause:
-          History.db  = 4KB stub (schema only, no rows)
-          History.db-wal = 1.2MB (ALL recent visit rows live here)
-          History.db-shm = 32KB shared memory index
-          History.db-lock = 0B  Safari-specific sentinel (not standard SQLite)
+        Universal Safari DB copy — works on ALL macOS versions.
 
-        Strategy:
-          1. Copy all 4 sidecar files into a private temp dir.
-          2. Open the COPY (not the original) with normal read-write access.
-          3. Run PRAGMA wal_checkpoint(TRUNCATE) — this flushes the WAL
-             pages into the DB file so all tables become visible.
-          4. Close, then re-open read-only for the actual SELECT query.
+        Step 1: Read the journal_mode directly from the LIVE DB (read-only,
+                no lock taken). This detects the mode without touching the file.
 
-        We NEVER checkpoint the live DB — only the copy.
+        Step 2a — WAL mode (macOS Ventura / Sonoma / Sequoia and later):
+          - History.db is a 4KB schema stub with zero rows.
+          - All recent visit rows live in History.db-wal (typically 1–5MB).
+          - Copy History.db + History.db-wal + History.db-shm + History.db-lock
+            into a private temp dir.
+          - Open the COPY (never the original) and run:
+              PRAGMA wal_checkpoint(TRUNCATE)
+            This flushes WAL pages into the DB file so all rows become
+            visible to a normal SELECT.
+          - Re-open the checkpointed copy read-only for the actual query.
+
+        Step 2b — DELETE / TRUNCATE / PERSIST mode (older macOS, fresh DBs):
+          - History.db contains all rows directly; no sidecar needed.
+          - Plain shutil.copy2 is sufficient.
+          - Open copy read-only for the query.
+
+        We NEVER modify the original live database.
         """
+        # --- Step 1: detect journal mode from the live DB ---
+        journal_mode = "delete"  # safe default
+        try:
+            probe = sqlite3.connect(f"file:{src_db}?mode=ro", uri=True)
+            row = probe.execute("PRAGMA journal_mode").fetchone()
+            probe.close()
+            if row:
+                journal_mode = row[0].lower()
+        except Exception as e:
+            self.logger.warning("Safari journal_mode probe failed: %s", e)
+
+        if not self._safari_schema_logged:
+            self.logger.info("Safari journal_mode: %s", journal_mode)
+
         dst = tmp_dir / "History.db"
         shutil.copy2(src_db, dst)
 
-        # Copy all known sidecar extensions
-        for ext in ("-wal", "-shm", "-lock"):
-            sidecar = Path(str(src_db) + ext)
-            if sidecar.exists():
-                try:
-                    shutil.copy2(sidecar, tmp_dir / ("History.db" + ext))
-                except Exception:
-                    pass  # -lock is 0 bytes, failure is non-fatal
+        # --- Step 2a: WAL mode — copy sidecars and checkpoint ---
+        if journal_mode == "wal":
+            for ext in ("-wal", "-shm", "-lock"):
+                sidecar = Path(str(src_db) + ext)
+                if sidecar.exists():
+                    try:
+                        shutil.copy2(sidecar, tmp_dir / ("History.db" + ext))
+                    except Exception:
+                        pass  # -lock is 0 bytes; non-fatal if missing
 
-        # Checkpoint the COPY so WAL rows land in the DB pages
-        try:
-            conn = sqlite3.connect(str(dst))
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.close()
-        except Exception as e:
-            self.logger.warning("Safari WAL checkpoint warning: %s", e)
+            # Flush WAL into the DB copy so rows are visible
+            try:
+                ckpt = sqlite3.connect(str(dst))
+                ckpt.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                ckpt.close()
+            except Exception as e:
+                self.logger.warning("Safari WAL checkpoint warning: %s", e)
+
+        # Step 2b: DELETE/TRUNCATE/PERSIST — plain copy already done above.
+        # No additional work needed; all rows are already in dst.
 
         return dst
 
@@ -427,11 +458,12 @@ class BrowserMonitor:
         conn    = None
         new_max = last_scan_time
         try:
-            # Open the checkpointed copy read-only
+            # Open the copy read-only for the SELECT query
             uri  = f"file:{tmp_db}?mode=ro"
             conn = sqlite3.connect(uri, uri=True)
             cur  = conn.cursor()
 
+            # Log table list once for diagnostics
             if profile["kind"] == "safari" and not self._safari_schema_logged:
                 cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 tables = [r[0] for r in cur.fetchall()]
