@@ -1,42 +1,53 @@
 <!--
-  Wazuh Browser History Decoder v2.6
+  Wazuh Browser History Decoder
   Author : Ram Kumar G (IT Fortress)
+  Version: 2.7
 
-  APPROACH CHANGE (v2.6):
-    Switched from parent/child chain to a single flat decoder.
-    The <prematch> works on the FULL raw log line (before any stripping)
-    so "browser-monitor: " is visible and matchable.
+  Raw log format (6 space-separated fields after timestamp):
+    Apr 15 17:52:23 blackwebs-Mac.local browser-monitor: 2026-04-15 17:51:39 Safari blackweb Default https://twitter.com/ X. It's what's happening
 
-    This is simpler, more reliable, and avoids child-not-firing issues.
+  Fields in order:
+    1. mon_browse_time     = 2026-04-15 17:51:39   (date + time, 2 tokens captured as one)
+    2. mon_browser_name    = Safari
+    3. mon_username        = blackweb
+    4. mon_browser_profile = Default
+    5. mon_url             = https://twitter.com/
+    6. mon_page_title      = X. It's what's happening / X
 
-  BUG FIX:
-    Previous approach used (\.+) for title which only matched literal dots.
-    Fixed to (.+) which matches any character = full page title captured.
+  Decoder chain:
+    browser-monitor-log          (parent)  — matches visit lines by prematch
+    browser-monitor-log-fields   (child)   — extracts the 6 fields via pcre2
 
-  Raw log format:
-    Apr 13 01:01:16 WIN-PC browser-monitor: 2026-04-13 01:01:16 Edge Default https://url Title
-
-  Extracted fields:
-    mon_timestamp    = 2026-04-13 01:01:16
-    mon_browser_name = Edge
-    mon_profile      = Default
-    mon_url          = https://discord.com/
-    mon_title        = Discord - Group Chat
+  Rules MUST use <decoded_as>browser-monitor-log-fields</decoded_as>
+  to fire on events that have decoded field values.
+  Using the parent decoder name gives no field extraction = no child rules fire.
 -->
 
-<!-- Visit lines: prematch on full raw log line, extracts all 5 fields -->
+<!-- Service lifecycle lines: service_started, service_stopped, no_browser_profiles_found -->
 <decoder name="browser-monitor-service">
   <program_name>^browser-monitor$</program_name>
-  <prematch>^service_</prematch>
+  <prematch>^service_|^no_browser</prematch>
 </decoder>
 
+<!-- Parent: matches any visit line starting with a timestamp -->
 <decoder name="browser-monitor-log">
   <program_name>^browser-monitor$</program_name>
-  <prematch>^\d+-\d+-\d+ \d+:\d+:\d+</prematch>
+  <prematch>^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}</prematch>
 </decoder>
 
+<!--
+  Child: extracts all 6 fields.
+
+  Regex breakdown (pcre2):
+    (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})  = timestamp  -> mon_browse_time
+    \s+(\S+)                                 = browser    -> mon_browser_name
+    \s+(\S+)                                 = username   -> mon_username
+    \s+(\S+)                                 = profile    -> mon_browser_profile
+    \s+(\S+)                                 = url        -> mon_url
+    \s+(.+)$                                 = title      -> mon_page_title
+-->
 <decoder name="browser-monitor-log-fields">
   <parent>browser-monitor-log</parent>
-  <regex type="pcre2">^(\d+-\d+-\d+ \d+:\d+:\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$</regex>
-  <order>mon_browse_time, mon_browser_name, mon_browser_profile, mon_url, mon_page_title</order>
+  <regex type="pcre2">^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$</regex>
+  <order>mon_browse_time, mon_browser_name, mon_username, mon_browser_profile, mon_url, mon_page_title</order>
 </decoder>

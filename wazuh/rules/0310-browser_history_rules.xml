@@ -1,21 +1,20 @@
 <!--
   Wazuh Browser History Rules
   Author  : Ram Kumar G (IT Fortress)
-  Version : 2.6
+  Version : 2.7
   Rule IDs: 900100 - 900122
 
-  IMPORTANT — Rule Execution Order:
-    Wazuh evaluates child rules (if_sid) in ORDER.
-    900114 (No Title suppression) MUST come before 900122 (catch-all).
-    If catch-all fires first, suppression never gets a chance.
+  IMPORTANT — decoded_as:
+    900100 MUST use <decoded_as>browser-monitor-log-fields</decoded_as>
+    (the CHILD decoder that extracts fields).
+    Using the parent decoder name = fields not decoded = NO child rules fire.
 
-  Decoder:
-    browser-monitor-log     — visit events
-    browser-monitor-service — service lifecycle events
+  IMPORTANT — Rule Execution Order:
+    900114 (No Title suppression) MUST come before 900122 (catch-all).
 
   Field refs (decoded):
-    mon_browser_name, mon_url, mon_browser_profile,
-    mon_page_title, mon_username
+    mon_browse_time, mon_browser_name, mon_username,
+    mon_browser_profile, mon_url, mon_page_title
 
   MITRE ATT&CK Mapped:
     T1204.002 - User Execution: Malicious File
@@ -29,248 +28,245 @@
 
 <group name="browser_history,">
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900100: PARENT — Every single browser visit.
-       ALL child rules (900101–900122) inherit from this.
-       ═══════════════════════════════════════════════ -->
+       Uses browser-monitor-log-FIELDS (child decoder)
+       so all extracted fields are available to child rules.
+       ALL child rules (900101-900122) inherit from this.
+       ═══════════════════════════════════════════════════ -->
   <rule id="900100" level="3">
-    <decoded_as>browser-monitor-log</decoded_as>
-    <description>Browser Visit: $(mon_browser_name) - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
+    <decoded_as>browser-monitor-log-fields</decoded_as>
+    <description>Browser Visit: $(mon_browser_name) [$(mon_username)] - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
     <group>browser_history,pci_dss_10.6.1,gpg13_10.1,gdpr_IV_35.7.d,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900114: SUPPRESS — No Title entries.
        ⚠️  MUST be placed FIRST among child rules.
-       Catches redirect hops, JS challenges, prefetch.
        level="0" = completely hidden from dashboard.
-       Uses regex on raw log (not decoded field) to
-       reliably match trailing whitespace variants.
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900114" level="0">
     <if_sid>900100</if_sid>
     <regex type="pcre2">No Title\s*$</regex>
     <description>Browser redirect/prefetch suppressed - No Title entry ignored</description>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900101: Dangerous file download
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900101" level="10">
     <if_sid>900100</if_sid>
     <regex type="pcre2">https?://\S+\.(exe|msi|ps1|bat|cmd|hta|vbs|jar|iso|img|dll|scr|pif)(\?|\s|$)</regex>
-    <description>Browser Download Risk: Dangerous file extension via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Download Risk: Dangerous file extension via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1204.002</id></mitre>
     <group>browser_history,download_risk,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900102: Credential / phishing page
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900102" level="10">
     <if_sid>900100</if_sid>
     <regex type="pcre2">https?://\S*(login|signin|sign-in|verify|mfa|otp|2fa|reset-password|account-recovery|password-reset)\S*</regex>
-    <description>Browser Credential Page: Possible phishing/auth page via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Credential Page: Possible phishing/auth page via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1566.002</id></mitre>
     <group>browser_history,phishing_risk,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900103: Anonymizer / TOR / VPN sites
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900103" level="8">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(torproject\.org|tor2web|torsocks|proxysite|hidemyass|anonymouse|proxfree|kproxy|hide\.me|whoer\.net|vpnbook|protonvpn\.com|nordvpn\.com|expressvpn\.com|surfshark\.com)</regex>
-    <description>Browser Anonymizer: TOR/VPN/proxy site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Anonymizer: TOR/VPN/proxy site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1090</id></mitre>
     <group>browser_history,anonymizer,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900104: Paste / data-sharing site
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900104" level="7">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(pastebin\.com|paste\.ee|ghostbin|hastebin|termbin|dpaste|rentry\.co|privatebin|mega\.nz|gofile\.io|anonfiles|bayfiles|wetransfer\.com|send\.firefox\.com)</regex>
-    <description>Browser Data-Sharing Site: Paste/upload site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Data-Sharing Site: Paste/upload site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1567</id></mitre>
     <group>browser_history,data_exfil_risk,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900105: Cloud storage
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900105" level="6">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(drive\.google\.com|docs\.google\.com|onedrive\.live\.com|dropbox\.com|box\.com|sync\.com|pcloud\.com|icloud\.com)</regex>
-    <description>Browser Cloud Storage: File sharing site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Cloud Storage: File sharing site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1567.002</id></mitre>
     <group>browser_history,cloud_upload,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900106: Non-HTTP scheme (ftp, file, blob etc.)
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900106" level="4">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(ftp://|file://|data:|blob:|javascript:)</regex>
-    <description>Browser Non-HTTP Scheme: Unusual URL scheme via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Non-HTTP Scheme: Unusual URL scheme via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,unusual_scheme,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900107: Insecure HTTP (excludes LAN/localhost)
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900107" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">http://(?!localhost|127\.0\.0\.1|192\.168\.|10\.|172\.)</regex>
-    <description>Browser Insecure HTTP: Non-HTTPS site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Insecure HTTP: Non-HTTPS site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,insecure_http,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900108: Crypto / trading platforms
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900108" level="5">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(binance\.com|coinbase\.com|kraken\.com|kucoin\.com|bybit\.com|crypto\.com|blockchain\.com|metamask\.io|uniswap\.org|opensea\.io)</regex>
-    <description>Browser Crypto Site: Cryptocurrency platform via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Crypto Site: Cryptocurrency platform via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,crypto,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900109: Social media
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900109" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(facebook\.com|twitter\.com|x\.com|instagram\.com|tiktok\.com|snapchat\.com|reddit\.com|linkedin\.com|discord\.com|telegram\.org)</regex>
-    <description>Browser Social Media: Social platform via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Social Media: Social platform via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,social_media,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900110: Exploit / hacking tools
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900110" level="9">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(exploit-db\.com|shodan\.io|zoomeye\.org|fofa\.info|censys\.io|hunter\.io|haveibeenpwned|hacking-tools|crackstation|nulled\.to)</regex>
-    <description>Browser Exploit Site: Security/exploit tool site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Exploit Site: Security/exploit tool site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1588.005</id></mitre>
     <group>browser_history,exploit_site,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900111: Dark web proxy / .onion
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900111" level="9">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(\.onion|darkweb|dark-web|onion\.to|onion\.ws|onion\.ly)</regex>
-    <description>Browser Dark Web: .onion/dark web proxy via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Dark Web: .onion/dark web proxy via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1090.003</id></mitre>
     <group>browser_history,dark_web,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900112: Malware keyword in URL
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900112" level="8">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(malware|ransomware|trojan|keylogger|spyware|botnet|c2server|cnc-server|payload-delivery|dropper)</regex>
-    <description>Browser Malware Keyword: Suspicious keyword in URL via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Malware Keyword: Suspicious keyword in URL via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <mitre><id>T1566</id></mitre>
     <group>browser_history,malware_keyword,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900113: Service lifecycle events
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900113" level="1">
     <decoded_as>browser-monitor-service</decoded_as>
     <description>Browser Monitor: Service event on $(agent.name)</description>
     <group>browser_history,service_lifecycle,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900115: Gaming sites
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900115" level="2">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(xbox\.com|store\.steampowered\.com|epicgames\.com|twitch\.tv|battle\.net|ea\.com|ubisoft\.com|roblox\.com|minecraft\.net)</regex>
-    <description>Browser Gaming Site: Gaming platform visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Gaming Site: Gaming platform visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,gaming,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900116: Streaming / entertainment
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900116" level="2">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(youtube\.com|netflix\.com|primevideo\.com|hotstar\.com|hulu\.com|disneyplus\.com|spotify\.com|soundcloud\.com)</regex>
-    <description>Browser Streaming: Media/streaming site visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Streaming: Media/streaming site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,streaming,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900117: AI / GenAI platforms
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900117" level="3">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(chat\.openai\.com|chatgpt\.com|claude\.ai|gemini\.google\.com|copilot\.microsoft\.com|perplexity\.ai|bard\.google\.com|huggingface\.co)</regex>
-    <description>Browser AI Platform: GenAI tool visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser AI Platform: GenAI tool visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,ai_platform,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900118: Shopping / e-commerce
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900118" level="2">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(amazon\.com|amazon\.in|flipkart\.com|ebay\.com|aliexpress\.com|myntra\.com|meesho\.com|snapdeal\.com|shopify\.com)</regex>
-    <description>Browser Shopping: E-commerce site visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Shopping: E-commerce site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,shopping,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900119: News sites
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900119" level="1">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(bbc\.com|cnn\.com|reuters\.com|theguardian\.com|ndtv\.com|thehindu\.com|timesofindia\.com|indiatimes\.com|hindustantimes\.com|techcrunch\.com|thehackernews\.com)</regex>
-    <description>Browser News: News/media site visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser News: News/media site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,news,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900120: Developer / security / DevOps tools
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900120" level="2">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(github\.com|gitlab\.com|stackoverflow\.com|npmjs\.com|pypi\.org|hub\.docker\.com|kubernetes\.io|terraform\.io|ansible\.com|splunk\.com|elastic\.co)</regex>
-    <description>Browser Dev Tool: Developer/DevOps site visited via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Dev Tool: Developer/DevOps site visited via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,dev_tools,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
+  <!-- ═══════════════════════════════════════════════════
        900121: Adult / inappropriate content
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900121" level="10">
     <if_sid>900100</if_sid>
     <regex type="pcre2">(pornhub\.com|xvideos\.com|xnxx\.com|redtube\.com|youporn\.com|onlyfans\.com|fapello\.com)</regex>
-    <description>Browser Adult Content: Inappropriate site via $(mon_browser_name) [$(mon_url)]</description>
+    <description>Browser Adult Content: Inappropriate site via $(mon_browser_name) [$(mon_username)] [$(mon_url)]</description>
     <group>browser_history,adult_content,</group>
   </rule>
 
-  <!-- ═══════════════════════════════════════════════
-       900122: CATCH-ALL — Any domain not matched
-               by rules 900101–900121 above.
+  <!-- ═══════════════════════════════════════════════════
+       900122: CATCH-ALL — Any URL not matched above.
                Ensures 100% visibility on ALL visits.
        ⚠️  MUST be the LAST child rule.
-       ⚠️  level="2" (low noise, just visibility)
-       ═══════════════════════════════════════════════ -->
+       ═══════════════════════════════════════════════════ -->
   <rule id="900122" level="2">
     <if_sid>900100</if_sid>
     <regex type="pcre2">https?://\S+</regex>
-    <description>Browser General Visit: $(mon_browser_name) - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
+    <description>Browser General Visit: $(mon_browser_name) [$(mon_username)] - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
     <group>browser_history,general_visit,</group>
   </rule>
 
