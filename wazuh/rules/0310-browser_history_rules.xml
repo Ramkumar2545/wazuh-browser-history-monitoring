@@ -1,18 +1,19 @@
 <!--
   Wazuh Browser History Rules
   Author  : Ram Kumar G (IT Fortress)
-  Version : 2.7
+  Version : 2.8
   Rule IDs: 900100 - 900122
 
-  IMPORTANT — decoded_as:
-    900100 MUST use <decoded_as>browser-monitor-log-fields</decoded_as>
-    (the CHILD decoder that extracts fields).
-    Using the parent decoder name = fields not decoded = NO child rules fire.
+  KEY FIX (v2.8):
+    Rule 900100 uses <decoded_as>browser-monitor-log</decoded_as>
+    Wazuh always reports the PARENT decoder name in Phase 2 output,
+    even when a child decoder extracted the fields.
+    So decoded_as must reference the PARENT name, not the child.
 
-  IMPORTANT — Rule Execution Order:
+  Rule Execution Order:
     900114 (No Title suppression) MUST come before 900122 (catch-all).
 
-  Field refs (decoded):
+  Fields available (decoded by child browser-monitor-log-fields):
     mon_browse_time, mon_browser_name, mon_username,
     mon_browser_profile, mon_url, mon_page_title
 
@@ -30,19 +31,19 @@
 
   <!-- ═══════════════════════════════════════════════════
        900100: PARENT — Every single browser visit.
-       Uses browser-monitor-log-FIELDS (child decoder)
-       so all extracted fields are available to child rules.
-       ALL child rules (900101-900122) inherit from this.
+       decoded_as = browser-monitor-log (PARENT name).
+       Wazuh reports parent decoder name even when child
+       extracts the fields — so this MUST be parent name.
        ═══════════════════════════════════════════════════ -->
   <rule id="900100" level="3">
-    <decoded_as>browser-monitor-log-fields</decoded_as>
+    <decoded_as>browser-monitor-log</decoded_as>
     <description>Browser Visit: $(mon_browser_name) [$(mon_username)] - $(mon_url) [$(mon_page_title)] on $(agent.name)</description>
     <group>browser_history,pci_dss_10.6.1,gpg13_10.1,gdpr_IV_35.7.d,</group>
   </rule>
 
   <!-- ═══════════════════════════════════════════════════
        900114: SUPPRESS — No Title entries.
-       ⚠️  MUST be placed FIRST among child rules.
+       ⚠️  MUST be FIRST child rule.
        level="0" = completely hidden from dashboard.
        ═══════════════════════════════════════════════════ -->
   <rule id="900114" level="0">
