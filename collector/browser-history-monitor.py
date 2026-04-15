@@ -2,7 +2,7 @@
 """
 Wazuh Browser History Monitor
 Author  : Ram Kumar G (IT Fortress)
-Version : 2.5 (Safari WAL fix)
+Version : 2.6 (Safari WAL checkpoint fix)
 Platform: Windows | Linux | macOS
 Browsers: Chrome, Edge, Brave, Firefox, Opera, OperaGX, Vivaldi,
           Waterfox, Tor, Chromium, Safari (macOS)
@@ -13,12 +13,13 @@ Writes syslog-format lines to browser_history.log.
 Wazuh agent picks up the log via <localfile> in ossec.conf.
 
 macOS Fixes:
-  v2.4 - Detect real GUI user / drop privs / fix root-as-user bug.
-  v2.5 - Copy Safari WAL sidecar files (-wal, -shm) alongside History.db
-         so SQLite can reconstruct the full schema. Without the -wal file
-         the copied DB appears empty (no tables) on macOS Sonoma/Sequoia.
-         Open copy with URI immutable=1 to avoid locking the live DB.
-         Clean up all three temp files on exit.
+  v2.4 - Detect real GUI user / drop privs for LaunchAgent.
+  v2.5 - Copy WAL sidecar files alongside History.db.
+  v2.6 - Safari stores ALL recent visits in History.db-wal (1.2MB),
+         not in History.db (4KB stub). After copying the 3 sidecar
+         files, open the copy and run PRAGMA wal_checkpoint(TRUNCATE)
+         to flush WAL pages into the DB before querying. Drop
+         ?immutable=1 which blocked WAL replay on copied DBs.
 """
 
 import os
@@ -250,8 +251,8 @@ class BrowserMonitor:
 
     # -- profile enumeration ---------------------------------------------------
     def _find_profiles(self):
-        profiles  = []
-        seen_dbs  = set()
+        profiles = []
+        seen_dbs = set()
 
         for name, username, root in self._get_browser_roots():
             if not root.exists():
@@ -348,28 +349,44 @@ class BrowserMonitor:
                 )
         self.state[key] = current
 
-    # -- Safari WAL-aware copy -------------------------------------------------
+    # -- Safari WAL-aware copy + checkpoint ------------------------------------
     def _copy_safari_db(self, src_db: Path, tmp_dir: Path) -> Path:
         """
-        FIX v2.5: Safari on macOS Sonoma/Sequoia uses WAL journal mode.
-        Copying only History.db yields a schema-less shell — SQLite needs
-        the matching -wal and -shm sidecar files to reconstruct the full DB.
+        FIX v2.6 — Root cause:
+          History.db  = 4KB stub (schema only, no rows)
+          History.db-wal = 1.2MB (ALL recent visit rows live here)
+          History.db-shm = 32KB shared memory index
+          History.db-lock = 0B  Safari-specific sentinel (not standard SQLite)
 
         Strategy:
-          1. Copy History.db  -> tmp_dir/History.db
-          2. Copy History.db-wal -> tmp_dir/History.db-wal  (if present)
-          3. Copy History.db-shm -> tmp_dir/History.db-shm  (if present)
-          4. Open with uri=True + ?immutable=1 so SQLite reads the WAL
-             without trying to write a new lock file on the original path.
+          1. Copy all 4 sidecar files into a private temp dir.
+          2. Open the COPY (not the original) with normal read-write access.
+          3. Run PRAGMA wal_checkpoint(TRUNCATE) — this flushes the WAL
+             pages into the DB file so all tables become visible.
+          4. Close, then re-open read-only for the actual SELECT query.
 
-        Returns the Path to the copied DB inside tmp_dir, or raises.
+        We NEVER checkpoint the live DB — only the copy.
         """
         dst = tmp_dir / "History.db"
         shutil.copy2(src_db, dst)
-        for ext in ("-wal", "-shm"):
+
+        # Copy all known sidecar extensions
+        for ext in ("-wal", "-shm", "-lock"):
             sidecar = Path(str(src_db) + ext)
             if sidecar.exists():
-                shutil.copy2(sidecar, tmp_dir / ("History.db" + ext))
+                try:
+                    shutil.copy2(sidecar, tmp_dir / ("History.db" + ext))
+                except Exception:
+                    pass  # -lock is 0 bytes, failure is non-fatal
+
+        # Checkpoint the COPY so WAL rows land in the DB pages
+        try:
+            conn = sqlite3.connect(str(dst))
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception as e:
+            self.logger.warning("Safari WAL checkpoint warning: %s", e)
+
         return dst
 
     # -- history processing ----------------------------------------------------
@@ -381,7 +398,6 @@ class BrowserMonitor:
         tmp_dir  = Path(tempfile.mkdtemp(prefix="bhm_"))
         tmp_db   = tmp_dir / f"{safe_key}.sqlite"
 
-        # --- copy the DB (Safari gets WAL-aware copy, others get simple copy)
         try:
             if profile["kind"] == "safari":
                 tmp_db = self._copy_safari_db(profile["db"], tmp_dir)
@@ -403,24 +419,24 @@ class BrowserMonitor:
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return
         except Exception as e:
-            self.logger.error(
-                "Cannot copy %s DB for user '%s': %s",
-                profile["browser"], profile["username"], e
-            )
+            self.logger.error("Cannot copy %s DB for user '%s': %s",
+                              profile["browser"], profile["username"], e)
             shutil.rmtree(tmp_dir, ignore_errors=True)
             return
 
         conn    = None
         new_max = last_scan_time
         try:
-            if profile["kind"] == "safari":
-                # immutable=1 tells SQLite to read the WAL without acquiring
-                # any locks, preventing SQLITE_BUSY on the live DB copy.
-                uri = f"file:{tmp_db}?immutable=1"
-                conn = sqlite3.connect(uri, uri=True)
-            else:
-                conn = sqlite3.connect(str(tmp_db))
-            cur = conn.cursor()
+            # Open the checkpointed copy read-only
+            uri  = f"file:{tmp_db}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+            cur  = conn.cursor()
+
+            if profile["kind"] == "safari" and not self._safari_schema_logged:
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = [r[0] for r in cur.fetchall()]
+                self.logger.info("Safari DB tables: %s", tables)
+                self._safari_schema_logged = True
 
             if profile["kind"] == "chrome":
                 cur.execute(
@@ -437,14 +453,6 @@ class BrowserMonitor:
                     (last_scan_time,)
                 )
             elif profile["kind"] == "safari":
-                # Log the actual table list once for debugging (removed after
-                # first successful read so it doesn't spam the log).
-                if not self._safari_schema_logged:
-                    cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                    tables = [r[0] for r in cur.fetchall()]
-                    self.logger.info("Safari DB tables: %s", tables)
-                    self._safari_schema_logged = True
-
                 threshold = last_scan_time if last_scan_time > 0 else 0
                 cur.execute(
                     "SELECT v.visit_time, i.url, v.title "
@@ -472,7 +480,8 @@ class BrowserMonitor:
 
         except Exception as e:
             self.logger.error("DB query error [%s %s %s]: %s",
-                              profile['username'], profile['browser'], profile['profile'], e)
+                              profile['username'], profile['browser'],
+                              profile['profile'], e)
         finally:
             if conn:
                 conn.close()
