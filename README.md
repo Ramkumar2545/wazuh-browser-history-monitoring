@@ -39,7 +39,7 @@
 ┌──────────────────────────────────────────────────────┐
 │                   WAZUH MANAGER                      │
 │  ┌──────────────────────┐  ┌────────────────────────┐│
-│  │ Decoder               │─▶│ Rules (900100–900113)  ││
+│  │ Decoder               │─▶│ Rules (900100–900122)  ││
 │  │ 0310-browser_history  │  │ Alerts → Dashboard     ││
 │  └──────────────────────┘  └────────────────────────┘│
 └───────────────────────────────┬──────────────────────┘
@@ -140,20 +140,29 @@ ls -lah /var/ossec/etc/rules/0310-browser_history_rules.xml
 
 | Rule ID | Level | Category | Example Match |
 |---|---|---|---|
-| 900100 | 2 | Baseline visibility | Any browser visit |
-| 900101 | 10 | Dangerous download | `.exe` `.ps1` `.hta` `.msi` `.iso` in URL |
-| 900102 | 10 | Phishing / Credential | `login` `mfa` `verify` `otp` `password-reset` in URL |
-| 900103 | 8 | Anonymizer / TOR | `torproject.org`, `protonvpn`, `nordvpn` |
-| 900104 | 7 | Data exfiltration | `pastebin.com`, `mega.nz`, `wetransfer` |
-| 900105 | 6 | Cloud storage upload | `drive.google.com`, `onedrive`, `dropbox` |
-| 900106 | 4 | Non-HTTP scheme | `ftp://`, `file://`, `data:`, `blob:` |
-| 900107 | 3 | Insecure HTTP | URL starts with `http://` (not https) |
-| 900108 | 5 | Crypto / Trading | `binance.com`, `coinbase.com`, `kraken.com` |
-| 900109 | 3 | Social Media | `facebook`, `twitter`, `tiktok`, `instagram` |
-| 900110 | 9 | Exploit / Hacking tool | `exploit-db.com`, `shodan.io`, `hackforums` |
-| 900111 | 9 | Dark web / .onion proxy | `.onion`, `dark.fail`, `ahmia.fi` |
-| 900112 | 8 | Malware keyword in domain | `malware`, `ransomware`, `botnet` in domain |
-| 900113 | 1 | Monitor service started | Collector startup message |
+| 900100 | 3 | Baseline visibility | Any browser visit |
+| 900101 | 10 | Dangerous download | `.exe` `.ps1` `.hta` `.msi` `.iso` `.bat` `.vbs` `.dll` in URL |
+| 900102 | 10 | Phishing / Credential | `login` `mfa` `verify` `otp` `2fa` `password-reset` in URL |
+| 900103 | 8 | Anonymizer / TOR | `torproject.org`, `protonvpn`, `nordvpn`, `expressvpn` |
+| 900104 | 7 | Data exfiltration | `pastebin.com`, `mega.nz`, `wetransfer`, `gofile.io` |
+| 900105 | 6 | Cloud storage upload | `drive.google.com`, `onedrive`, `dropbox`, `pcloud` |
+| 900106 | 4 | Non-HTTP scheme | `ftp://`, `file://`, `data:`, `blob:`, `javascript:` |
+| 900107 | 3 | Insecure HTTP | URL starts with `http://` (not https, excludes LAN) |
+| 900108 | 5 | Crypto / Trading | `binance.com`, `coinbase.com`, `metamask.io`, `opensea.io` |
+| 900109 | 3 | Social Media | `facebook`, `x.com`, `instagram`, `tiktok`, `discord` |
+| 900110 | 9 | Exploit / Hacking tool | `exploit-db.com`, `shodan.io`, `censys.io`, `nulled.to` |
+| 900111 | 9 | Dark web / .onion proxy | `.onion`, `dark.fail`, `ahmia.fi`, `onion.to` |
+| 900112 | 8 | Malware keyword in URL | `malware`, `ransomware`, `botnet`, `trojan`, `dropper` |
+| 900113 | 3 | Service lifecycle | Collector startup / shutdown message |
+| 900114 | 3 | Background / Redirect | No Title entries — background requests suppressed |
+| 900115 | 3 | Gaming sites | `steam`, `epicgames`, `xbox`, `roblox`, `twitch` |
+| 900116 | 3 | Streaming / Entertainment | `youtube`, `netflix`, `spotify`, `hotstar`, `disneyplus` |
+| 900117 | 3 | AI / GenAI platforms | `chatgpt`, `claude.ai`, `gemini`, `perplexity.ai` |
+| 900118 | 3 | Shopping / E-commerce | `amazon`, `flipkart`, `ebay`, `aliexpress`, `myntra` |
+| 900119 | 3 | News / Media | `bbc`, `cnn`, `ndtv`, `thehindu`, `thehackernews` |
+| 900120 | 3 | Developer / DevOps tools | `github`, `gitlab`, `stackoverflow`, `docker`, `pypi` |
+| 900121 | 10 | Adult / Inappropriate content | Explicit site domains |
+| 900122 | 3 | Catch-all general visit | Any `https://` URL not matched by rules above |
 
 ---
 
@@ -661,7 +670,7 @@ Paste:
 Apr 13 22:41:00 agent browser-monitor: 2026-04-13 22:41:00 Chrome agent Default https://google.com Google Search
 ```
 
-Expect rule `900100` (level 2 baseline) to fire. For a high-severity test:
+Expect rule `900100` (level 3 baseline) to fire. For a high-severity test:
 ```
 Apr 13 22:41:00 agent browser-monitor: 2026-04-13 22:41:00 Firefox agent default https://torproject.org Tor Project
 ```
@@ -672,22 +681,102 @@ Expect rule `900103` (level 8 anonymizer) to fire.
 
 ## Detection Rules Reference
 
-| Rule ID | Level | Alert | MITRE |
+| Rule ID | Level | 🚨 Alert | MITRE |
 |---|---|---|---|
-| 900100 | 2 | Browser visit (baseline visibility) | — |
-| 900101 | 10 | Dangerous file download (.exe .ps1 .hta .msi .iso) | T1204.002 |
-| 900102 | 10 | Credential/phishing page (login, mfa, verify, otp) | T1566.002 |
-| 900103 | 8 | Anonymizer / TOR access | T1090 |
-| 900104 | 7 | Paste/file-sharing site (Pastebin, Mega, WeTransfer) | T1567 |
-| 900105 | 6 | Cloud storage (Drive, OneDrive, Dropbox, Box) | T1567.002 |
-| 900106 | 4 | Non-HTTP scheme (ftp, file, data, blob) | — |
-| 900107 | 3 | Insecure HTTP visit | — |
-| 900108 | 5 | Crypto/trading site (Binance, Coinbase, Kraken) | — |
-| 900109 | 3 | Social media (Facebook, Twitter, TikTok, Instagram) | — |
-| 900110 | 9 | Exploit/hacking tool site (exploit-db, Shodan) | T1588.005 |
-| 900111 | 9 | Dark web / .onion proxy access | T1090.003 |
-| 900112 | 8 | Malware keyword in domain | T1566 |
-| 900113 | 1 | Monitor service started | — |
+| 900100 | 3 | 🟢 Browser visit — baseline visibility (every visit logged) | — |
+| 900101 | 10 | 🔴 Dangerous file download (`.exe` `.ps1` `.hta` `.msi` `.iso` `.bat` `.vbs` `.jar` `.dll` `.scr`) | T1204.002 |
+| 900102 | 10 | 🔴 Credential / Phishing page (`login` `signin` `verify` `mfa` `otp` `2fa` `reset-password`) | T1566.002 |
+| 900103 | 8 | 🟠 Anonymizer / TOR / VPN site (`torproject.org`, `protonvpn`, `nordvpn`, `expressvpn`, `hidemyass`) | T1090 |
+| 900104 | 7 | 🟠 Paste / file-sharing site (`pastebin.com`, `mega.nz`, `wetransfer`, `gofile.io`, `privatebin`) | T1567 |
+| 900105 | 6 | 🟡 Cloud storage upload (`drive.google.com`, `onedrive`, `dropbox`, `box.com`, `pcloud`) | T1567.002 |
+| 900106 | 4 | 🟡 Non-HTTP scheme (`ftp://`, `file://`, `data:`, `blob:`, `javascript:`) | — |
+| 900107 | 3 | 🔵 Insecure HTTP visit — excludes LAN/localhost (URL starts `http://`) | — |
+| 900108 | 5 | 🟡 Crypto / Trading site (`binance.com`, `coinbase.com`, `metamask.io`, `opensea.io`, `uniswap`) | — |
+| 900109 | 3 | 🔵 Social media (`facebook`, `twitter/x.com`, `instagram`, `tiktok`, `discord`, `telegram`) | — |
+| 900110 | 9 | 🔴 Exploit / Hacking tool site (`exploit-db.com`, `shodan.io`, `censys.io`, `nulled.to`, `crackstation`) | T1588.005 |
+| 900111 | 9 | 🔴 Dark web / `.onion` proxy access (`.onion`, `onion.to`, `onion.ws`, `darkweb`) | T1090.003 |
+| 900112 | 8 | 🟠 Malware keyword in URL (`malware`, `ransomware`, `trojan`, `keylogger`, `botnet`, `dropper`) | T1566 |
+| 900113 | 3 | ⚪ Service lifecycle event — collector startup / shutdown on agent | — |
+| 900114 | 3 | 🔵 Background / Redirect — No Title entries suppressed from dashboard | — |
+| 900115 | 3 | 🔵 Gaming site (`steam`, `epicgames`, `xbox`, `roblox`, `twitch`, `minecraft`, `battle.net`) | — |
+| 900116 | 3 | 🔵 Streaming / Entertainment (`youtube`, `netflix`, `spotify`, `hotstar`, `disney+`, `primevideo`) | — |
+| 900117 | 3 | 🔵 AI / GenAI platform (`chatgpt`, `claude.ai`, `gemini`, `copilot`, `perplexity.ai`, `huggingface`) | — |
+| 900118 | 3 | 🔵 Shopping / E-commerce (`amazon`, `flipkart`, `ebay`, `aliexpress`, `myntra`, `shopify`) | — |
+| 900119 | 3 | 🔵 News / Media site (`bbc`, `cnn`, `ndtv`, `thehindu`, `techcrunch`, `thehackernews`) | — |
+| 900120 | 3 | 🔵 Developer / DevOps tools (`github`, `gitlab`, `stackoverflow`, `docker`, `pypi`, `elastic`) | — |
+| 900121 | 10 | 🔴 Adult / Inappropriate content detected | — |
+| 900122 | 3 | 🟢 Catch-all — Any URL not matched above (100% visit visibility) | — |
+
+---
+
+## 📊 Rules Summary
+
+| Rule ID | Level | Category | Example Match |
+|---|---|---|---|
+| 900100 | 3 | Baseline visibility | Any browser visit |
+| 900101 | 10 | Dangerous download | `.exe` `.ps1` `.hta` `.msi` `.iso` `.bat` `.vbs` `.dll` in URL |
+| 900102 | 10 | Phishing / Credential | `login` `mfa` `verify` `otp` `2fa` `password-reset` in URL |
+| 900103 | 8 | Anonymizer / TOR | `torproject.org`, `protonvpn`, `nordvpn`, `expressvpn` |
+| 900104 | 7 | Data exfiltration | `pastebin.com`, `mega.nz`, `wetransfer`, `gofile.io` |
+| 900105 | 6 | Cloud storage upload | `drive.google.com`, `onedrive`, `dropbox`, `pcloud` |
+| 900106 | 4 | Non-HTTP scheme | `ftp://`, `file://`, `data:`, `blob:`, `javascript:` |
+| 900107 | 3 | Insecure HTTP | URL starts `http://` (not https, excludes LAN) |
+| 900108 | 5 | Crypto / Trading | `binance.com`, `coinbase.com`, `metamask.io`, `opensea.io` |
+| 900109 | 3 | Social Media | `facebook`, `x.com`, `instagram`, `tiktok`, `discord` |
+| 900110 | 9 | Exploit / Hacking tool | `exploit-db.com`, `shodan.io`, `censys.io`, `nulled.to` |
+| 900111 | 9 | Dark web / .onion proxy | `.onion`, `dark.fail`, `ahmia.fi`, `onion.to` |
+| 900112 | 8 | Malware keyword in URL | `malware`, `ransomware`, `botnet`, `trojan`, `dropper` |
+| 900113 | 3 | Service lifecycle | Collector startup / shutdown message |
+| 900114 | 3 | Background / Redirect | No Title entries — background requests suppressed |
+| 900115 | 3 | Gaming sites | `steam`, `epicgames`, `xbox`, `roblox`, `twitch` |
+| 900116 | 3 | Streaming / Entertainment | `youtube`, `netflix`, `spotify`, `hotstar`, `disneyplus` |
+| 900117 | 3 | AI / GenAI platforms | `chatgpt`, `claude.ai`, `gemini`, `perplexity.ai` |
+| 900118 | 3 | Shopping / E-commerce | `amazon`, `flipkart`, `ebay`, `aliexpress`, `myntra` |
+| 900119 | 3 | News / Media | `bbc`, `cnn`, `ndtv`, `thehindu`, `thehackernews` |
+| 900120 | 3 | Developer / DevOps tools | `github`, `gitlab`, `stackoverflow`, `docker`, `pypi` |
+| 900121 | 10 | Adult / Inappropriate content | Explicit site domains |
+| 900122 | 3 | Catch-all general visit | Any `https://` URL not matched by rules above |
+
+---
+
+## 🎯 Quick Detection Summary
+
+### By Severity
+
+| Severity | Level Range | Rules | Count |
+|---|---|---|---|
+| 🔴 Critical | 9 – 10 | 900101, 900102, 900110, 900111, 900121 | 5 |
+| 🟠 High | 7 – 8 | 900103, 900104, 900112 | 3 |
+| 🟡 Medium | 4 – 6 | 900105, 900106, 900108 | 3 |
+| 🔵 Low | 1 – 3 | 900100, 900107, 900109, 900113, 900114, 900115, 900116, 900117, 900118, 900119, 900120, 900122 | 12 |
+
+### By Detection Category
+
+| 🗂️ Category | Rules |
+|---|---|
+| 🦠 Malware & Exploit Activity | 900101, 900110, 900112 |
+| 🎣 Phishing & Credential Theft | 900102 |
+| 🕵️ Anonymization & Evasion | 900103, 900111 |
+| 📤 Data Exfiltration | 900104, 900105, 900106 |
+| 📡 Risky Browsing Behavior | 900107, 900108, 900109, 900121 |
+| 🎮 Productivity Monitoring | 900115, 900116, 900117, 900118, 900119, 900120 |
+| ✅ Baseline & Audit | 900100, 900113, 900114, 900122 |
+
+### 🗺️ MITRE ATT&CK Mapping
+
+| Technique ID | Technique Name | Tactic | Rule |
+|---|---|---|---|
+| T1204.002 | User Execution: Malicious File | Execution | 900101 |
+| T1566.002 | Phishing: Spearphishing Link | Initial Access | 900102 |
+| T1566 | Phishing (generic) | Initial Access | 900112 |
+| T1090 | Proxy / Anonymizer | C2 | 900103 |
+| T1090.003 | Multi-hop Proxy / Dark Web | C2 | 900111 |
+| T1567 | Exfiltration Over Web Service | Exfiltration | 900104 |
+| T1567.002 | Exfiltration to Cloud Storage | Exfiltration | 900105 |
+| T1588.005 | Obtain Capabilities: Exploits | Resource Dev | 900110 |
+
+> ✅ **23 Rules | IDs 900100–900122 | 8 MITRE Techniques | Version 2.8**  
+> **Tactics Covered: Initial Access · Execution · Exfiltration · C2 · Resource Development**
 
 ---
 
@@ -728,7 +817,7 @@ wazuh-browser-history-monitoring/
     ├── decoders/
     │   └── 0310-browser_history_decoder.xml    ← Wazuh decoder
     └── rules/
-        └── 0310-browser_history_rules.xml      ← 13 detection rules (MITRE mapped, IDs 900100–900113)
+        └── 0310-browser_history_rules.xml      ← 23 detection rules (MITRE mapped, IDs 900100–900122)
 ```
 
 ---
